@@ -731,10 +731,18 @@ export class DeltaAutoTraderEngine {
     const structureData = priceActionPlaybook.evaluateMarketStructure(closedCandles15m, swings.swingHighs, swings.swingLows);
     const currentStructure = paVerdict ? paVerdict.marketStructure : structureData.structure;
 
-    if (currentStructure === 'DOWNTREND' && mathVerdict.recommendedSide === 'BUY' && paVerdict?.setupType !== 'LIQUIDITY_SWEEP' && mathVerdict.quantScore < 70 && !mathVerdict.reasons.some(r => r.includes('Support') || r.includes('Oversold') || r.includes('Reversal') || r.includes('Exhaustion') || r.includes('Floor') || r.includes('Bounce'))) {
+    // Evaluate Dedicated Indicator for token
+    let evalResult: any = null;
+    try {
+      evalResult = strategyEngine.evaluateSymbol(symbol, closedCandles15m);
+    } catch (e) {}
+
+    const indicatorSide: 'BUY' | 'SELL' | null = (evalResult?.signal || evalResult?.readySignal || null);
+
+    if (currentStructure === 'DOWNTREND' && mathVerdict.recommendedSide === 'BUY' && indicatorSide !== 'BUY' && paVerdict?.setupType !== 'LIQUIDITY_SWEEP' && mathVerdict.quantScore < 70 && !mathVerdict.reasons.some(r => r.includes('Support') || r.includes('Oversold') || r.includes('Reversal') || r.includes('Exhaustion') || r.includes('Floor') || r.includes('Bounce'))) {
       console.log(`🛡️ [STRUCTURE SHIELD] ${cleanSym} BUY blocked: Market Structure is DOWNTREND (LH/LL) without sufficient quant support/exhaustion/reversal score (${mathVerdict.quantScore}/100).`);
       isMathBlockedByStructure = true;
-    } else if (currentStructure === 'UPTREND' && mathVerdict.recommendedSide === 'SELL' && paVerdict?.setupType !== 'LIQUIDITY_SWEEP' && mathVerdict.quantScore < 70 && !mathVerdict.reasons.some(r => r.includes('Resistance') || r.includes('Overbought') || r.includes('Reversal') || r.includes('Exhaustion') || r.includes('Fisher') || r.includes('Peak'))) {
+    } else if (currentStructure === 'UPTREND' && mathVerdict.recommendedSide === 'SELL' && indicatorSide !== 'SELL' && paVerdict?.setupType !== 'LIQUIDITY_SWEEP' && mathVerdict.quantScore < 70 && !mathVerdict.reasons.some(r => r.includes('Resistance') || r.includes('Overbought') || r.includes('Reversal') || r.includes('Exhaustion') || r.includes('Fisher') || r.includes('Peak'))) {
       console.log(`🛡️ [STRUCTURE SHIELD] ${cleanSym} SELL blocked: Market Structure is UPTREND (HH/HL) without sufficient quant exhaustion/reversal/resistance score (${mathVerdict.quantScore}/100).`);
       isMathBlockedByStructure = true;
     }
@@ -749,17 +757,24 @@ export class DeltaAutoTraderEngine {
     // 3. Price Action / Candlestick patterns act purely as TIMING CONFIRMATION in the SAME direction!
     // 4. Any conflict between Candle shape and Math/Indicators STRICTLY BLOCKS the trade!
     // =============================================================
-    const mathSide = mathVerdict.recommendedSide;
-    const mathScore = mathVerdict.quantScore;
+    let mathSide = mathVerdict.recommendedSide;
+    let mathScore = mathVerdict.quantScore;
 
-    if (mathSide && !isMathBlockedByStructure && mathScore >= 40) {
-      // 1. Evaluate Technical Indicator Confluence (EMA 20/50/200, RSI 14, MACD, RVOL)
-      let evalResult: any = null;
-      try {
-        evalResult = strategyEngine.evaluateSymbol(symbol, closedCandles15m);
-      } catch (e) {}
+    // Confluence Bridge: If dedicated indicator has an explicit signal, and Quant Math supports that direction
+    // (score >= 30 and higher than opposite side), synthesize math side to allow full indicator + math confluence execution!
+    if (!mathSide && indicatorSide && mathVerdict.scores) {
+      const buyScore = mathVerdict.scores.totalBuyScore;
+      const sellScore = mathVerdict.scores.totalSellScore;
+      if (indicatorSide === 'BUY' && buyScore >= 30 && buyScore > sellScore) {
+        mathSide = 'BUY';
+        mathScore = buyScore;
+      } else if (indicatorSide === 'SELL' && sellScore >= 30 && sellScore > buyScore) {
+        mathSide = 'SELL';
+        mathScore = sellScore;
+      }
+    }
 
-      const indicatorSide = evalResult?.signal; // 'BUY' | 'SELL' | null
+    if (mathSide && !isMathBlockedByStructure && mathScore >= 35) {
       const candlePattern = (evalResult?.diagnostics?.lastCandlePattern || '').trim();
       const candlePatternLower = candlePattern.toLowerCase();
       const isCandleBearish = candlePatternLower.includes('bearish') || 
@@ -802,10 +817,13 @@ export class DeltaAutoTraderEngine {
           return null;
         }
 
-        const isTrendPermitted = confluence.trendDirection !== 'BEARISH' && !confluence.isMacroBearish;
-        if (!isTrendPermitted) {
-          console.log(`🛡️ [CONFLUENCE VETO] ${cleanSym} BUY blocked: Macro Trend is BEARISH (Trend=${confluence.trendDirection}). Standing aside.`);
-          return null;
+        // Macro Trend Filter: Only restrict when indicator is neutral / not explicitly BUY
+        if (indicatorSide !== 'BUY') {
+          const isTrendPermitted = confluence.trendDirection !== 'BEARISH' && !confluence.isMacroBearish;
+          if (!isTrendPermitted) {
+            console.log(`🛡️ [CONFLUENCE VETO] ${cleanSym} BUY blocked: Macro Trend is BEARISH (Trend=${confluence.trendDirection}). Standing aside.`);
+            return null;
+          }
         }
       }
 
@@ -820,10 +838,13 @@ export class DeltaAutoTraderEngine {
           return null;
         }
 
-        const isTrendPermitted = confluence.trendDirection !== 'BULLISH' && !confluence.isMacroBullish;
-        if (!isTrendPermitted) {
-          console.log(`🛡️ [CONFLUENCE VETO] ${cleanSym} SELL blocked: Macro Trend is BULLISH (Trend=${confluence.trendDirection}). Standing aside.`);
-          return null;
+        // Macro Trend Filter: Only restrict when indicator is neutral / not explicitly SELL
+        if (indicatorSide !== 'SELL') {
+          const isTrendPermitted = confluence.trendDirection !== 'BULLISH' && !confluence.isMacroBullish;
+          if (!isTrendPermitted) {
+            console.log(`🛡️ [CONFLUENCE VETO] ${cleanSym} SELL blocked: Macro Trend is BULLISH (Trend=${confluence.trendDirection}). Standing aside.`);
+            return null;
+          }
         }
       }
 

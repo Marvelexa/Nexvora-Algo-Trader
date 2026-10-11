@@ -967,9 +967,9 @@ export class QuantMathematicalEngine {
 
     // -------------------------------------------------------------------------
     // STEP 4: TOTAL CONFLUENCE SCORE & EXECUTION THRESHOLD (Clean 0-100 Scale)
-    // Execution threshold: >= 40 points
+    // Execution threshold: >= 35 points
     // -------------------------------------------------------------------------
-    const EXECUTION_THRESHOLD = 40;
+    const EXECUTION_THRESHOLD = 35;
     const totalBuyScore = buyA + buyB + buyC + buyD + buyE + buyF;
     const totalSellScore = sellA + sellB + sellC + sellD + sellE + sellF;
 
