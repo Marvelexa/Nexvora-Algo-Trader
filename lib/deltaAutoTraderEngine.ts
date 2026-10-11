@@ -764,25 +764,32 @@ export class DeltaAutoTraderEngine {
       const indicatorQuality = evalResult?.diagnostics?.qualityScore || confluence.confluenceScore;
 
       // 1. HARD MANDATORY INDICATOR CONFLUENCE GATE:
-      // If technical indicators say BUY (allowsLong / BULLISH trend), NEVER SELL!
-      if (mathSide === 'SELL' && (confluence.allowsLong || !confluence.allowsShort || confluence.trendDirection === 'BULLISH' || confluence.isMacroBullish || indicatorSide === 'BUY')) {
-        console.log(`🛡️ [CONFLUENCE GUARD] ${cleanSym} SELL blocked: Indicator Signal is BULLISH (allowsLong=${confluence.allowsLong}, allowsShort=${confluence.allowsShort}, Trend=${confluence.trendDirection}, Indicator=${indicatorSide || 'NONE'}). Never short when Buy signal is active!`);
+      // Determine affirmative indicator stance:
+      const isIndicatorBullish = confluence.trendDirection === 'BULLISH' || confluence.isMacroBullish || indicatorSide === 'BUY' || confluence.allowsLong;
+      const isIndicatorBearish = confluence.trendDirection === 'BEARISH' || confluence.isMacroBearish || indicatorSide === 'SELL' || confluence.allowsShort;
+
+      // Strict User Mandate: Never counter-trade an opposing indicator trend!
+      // If indicators/trend are BULLISH, NEVER execute a SELL!
+      if (mathSide === 'SELL' && isIndicatorBullish) {
+        console.log(`🛡️ [CONFLUENCE GUARD] ${cleanSym} SELL blocked: Indicator Signal is BULLISH (Trend=${confluence.trendDirection}, MacroBullish=${confluence.isMacroBullish}, Indicator=${indicatorSide || 'NONE'}). Never short when Buy signal is active!`);
         return null;
       }
 
-      // If technical indicators say SELL (allowsShort / BEARISH trend), NEVER BUY!
-      if (mathSide === 'BUY' && (confluence.allowsShort || !confluence.allowsLong || confluence.trendDirection === 'BEARISH' || confluence.isMacroBearish || indicatorSide === 'SELL')) {
-        console.log(`🛡️ [CONFLUENCE GUARD] ${cleanSym} BUY blocked: Indicator Signal is BEARISH (allowsShort=${confluence.allowsShort}, allowsLong=${confluence.allowsLong}, Trend=${confluence.trendDirection}, Indicator=${indicatorSide || 'NONE'}). Never long when Sell signal is active!`);
+      // If indicators/trend are BEARISH, NEVER execute a BUY!
+      if (mathSide === 'BUY' && isIndicatorBearish) {
+        console.log(`🛡️ [CONFLUENCE GUARD] ${cleanSym} BUY blocked: Indicator Signal is BEARISH (Trend=${confluence.trendDirection}, MacroBearish=${confluence.isMacroBearish}, Indicator=${indicatorSide || 'NONE'}). Never long when Sell signal is active!`);
         return null;
       }
 
-      // Indicator Confluence MUST be affirmatively confirmed in the same direction:
+      // Indicator Confluence Check:
+      // For BUY: Either indicators are affirmatively bullish OR aligned via RSI/MACD (and NOT bearish)
+      // For SELL: Either indicators are affirmatively bearish OR aligned via RSI/MACD (and NOT bullish)
       const isIndicatorConfirmed = mathSide === 'BUY'
-        ? (confluence.allowsLong && (confluence.isMacroBullish || confluence.trendDirection === 'BULLISH' || confluence.isRsiBullish || Boolean(confluence.macd?.isBullish)))
-        : (confluence.allowsShort && (confluence.isMacroBearish || confluence.trendDirection === 'BEARISH' || confluence.isRsiBearish || Boolean(confluence.macd?.isBearish)));
+        ? (isIndicatorBullish || confluence.isRsiBullish || Boolean(confluence.macd?.isBullish)) && !isIndicatorBearish
+        : (isIndicatorBearish || confluence.isRsiBearish || Boolean(confluence.macd?.isBearish)) && !isIndicatorBullish;
 
       if (!isIndicatorConfirmed) {
-        console.log(`🛡️ [CONFLUENCE GUARD] ${cleanSym} ${mathSide} blocked: Institutional Indicators do not affirmatively confirm ${mathSide} (allowsLong=${confluence.allowsLong}, allowsShort=${confluence.allowsShort}, Trend=${confluence.trendDirection}). Standing aside.`);
+        console.log(`🛡️ [CONFLUENCE GUARD] ${cleanSym} ${mathSide} blocked: Institutional Indicators do not confirm ${mathSide} (Trend=${confluence.trendDirection}, Indicator=${indicatorSide || 'NONE'}). Standing aside.`);
         return null;
       }
 
