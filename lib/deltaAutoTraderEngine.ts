@@ -106,9 +106,9 @@ export class DeltaAutoTraderEngine {
       losingTradesCount: 0,
       winRatePercent: 0,
       activePositions: [],
-      maxConcurrentPositions: 1, // User Mandate: "maxium 1 trade beause capital only 2000₹ is there"
+      maxConcurrentPositions: 3, // Multi-trade enabled per user request to verify buy/sell confluence across pairs
       leverage: 20,
-      marginPercentPerTrade: 90.0, // Single-slot margin deployment (~₹1,800 INR per trade)
+      marginPercentPerTrade: 30.0, // Scaled margin deployment (~$15-$18 USD per trade for 3 slots)
       lastScanTimestamp: Date.now(),
       scanIntervalSeconds: 1, // High-frequency scan cycle
       shadowGateEnabled: false, // DISABLED — Shadow Gate removed from system
@@ -149,9 +149,10 @@ export class DeltaAutoTraderEngine {
             this.state.activePositions = [];
           }
           this.state.mode = computedMode;
-          // Max 1 Trade (User Mandate: "maxium 1 trade beause capital only 2000₹ is there")
-          this.state.maxConcurrentPositions = 1;
-          this.state.marginPercentPerTrade = 90.0;
+          // Multi-Trade Support (User Mandate: "make system to do multiple trade that help me to see sell sell buyy buyy system fix or not")
+          const configuredMax = typeof parsed.maxConcurrentPositions === 'number' ? parsed.maxConcurrentPositions : 3;
+          this.state.maxConcurrentPositions = Math.max(1, Math.min(configuredMax, 4));
+          this.state.marginPercentPerTrade = typeof parsed.marginPercentPerTrade === 'number' ? parsed.marginPercentPerTrade : 30.0;
           this.state.isInverseTrading = false;
           this.state.shadowGateEnabled = false;
           if (Array.isArray(this.state.activePositions)) {
@@ -200,8 +201,8 @@ export class DeltaAutoTraderEngine {
       }
 
       if (typeof cfg.maxConcurrentPositions === 'number') {
-        if (cfg.maxConcurrentPositions < 1 || cfg.maxConcurrentPositions > 2) {
-          throw new Error(`CRITICAL RISK VIOLATION: maxConcurrentPositions (${cfg.maxConcurrentPositions}) must be 1 or 2!`);
+        if (cfg.maxConcurrentPositions < 1 || cfg.maxConcurrentPositions > 4) {
+          throw new Error(`CRITICAL RISK VIOLATION: maxConcurrentPositions (${cfg.maxConcurrentPositions}) must be between 1 and 4!`);
         }
         this.state.maxConcurrentPositions = cfg.maxConcurrentPositions;
       }
@@ -1500,25 +1501,8 @@ export class DeltaAutoTraderEngine {
           return true;
         });
 
-        // Score with Leader-Follower synergy:
-        alignedCandidates.sort((a, b) => {
-          const rankA = DeltaAutoTraderEngine.LEADER_RANKS[a.cleanDeltaSym] || 50;
-          const rankB = DeltaAutoTraderEngine.LEADER_RANKS[b.cleanDeltaSym] || 50;
-          let scoreA = a.multiSignal.confidenceScore + (rankA * 0.2);
-          let scoreB = b.multiSignal.confidenceScore + (rankB * 0.2);
-
-          // If a candidate's Leader is already active and candidate matches leader side, give huge synergy boost:
-          const leaderA = DeltaAutoTraderEngine.FOLLOWER_LEADERS[a.cleanDeltaSym];
-          if (leaderA && this.state.activePositions.some(p => p.symbol === leaderA && p.side === a.executedSide)) {
-            scoreA += 30;
-          }
-          const leaderB = DeltaAutoTraderEngine.FOLLOWER_LEADERS[b.cleanDeltaSym];
-          if (leaderB && this.state.activePositions.some(p => p.symbol === leaderB && p.side === b.executedSide)) {
-            scoreB += 30;
-          }
-
-          return scoreB - scoreA;
-        });
+        // Sort candidates by highest confidence score for independent multi-coin execution:
+        alignedCandidates.sort((a, b) => b.multiSignal.confidenceScore - a.multiSignal.confidenceScore);
 
         // Execute winning candidates up to available slots
         let currentBuyCount = this.state.activePositions.filter(p => p.side === 'BUY').length;
@@ -1778,16 +1762,8 @@ export class DeltaAutoTraderEngine {
       }
     }
 
-    // MANDATORY USER MANDATE: Follower MUST copy its Leader ("xrp kaa copie kiyaa hota sol aisa")
-    // "remaing trade nho copie karne" -> A Leader NEVER gets blocked by an inferior remaining follower!
-    const designatedLeader = DeltaAutoTraderEngine.FOLLOWER_LEADERS[cleanSym];
-    if (designatedLeader) {
-      const activeLeader = this.state.activePositions.find(p => p.symbol === designatedLeader);
-      if (activeLeader && params.side !== activeLeader.side) {
-        console.warn(`🛑 [LEADER COPY GUARD] Follower ${cleanSym} ${params.side} rejected — must COPY Leader ${designatedLeader} direction (${activeLeader.side})!`);
-        return null;
-      }
-    }
+    // Independent Multi-Coin Trading: Every token trades strictly according to its own dedicated sniper & math confluence
+    // No artificial leader-follower forcing (User Mandate: "make system to do multiple trade that help me to see sell sell buyy buyy system fix or not")
 
     // TRADE LIMIT: Strict 2 Position Limit (User Mandate: "limit 2 kii hii rakhaa karoo naa sirff")
     const maxPositionsAllowed = this.state.maxConcurrentPositions || 1;
@@ -1956,10 +1932,8 @@ export class DeltaAutoTraderEngine {
 
     console.log(`🎯 Position opened: ${params.symbol} ${params.side} @ $${fillPrice.toFixed(2)} | TP: $${reanchoredTP.toFixed(2)} | SL: $${reanchoredSL.toFixed(2)}`);
 
-    // Propagate signal to designated follower (e.g. XRP -> SOL, DOGE -> AVAX)
-    if (DeltaAutoTraderEngine.LEADER_FOLLOWERS[cleanSym]) {
-      this.propagateLeaderSignal(cleanSym, params.side, params.strategyName).catch(() => {});
-    }
+    // Independent Trading: Do not forcibly propagate leader signals to other coins
+    // Each coin trades purely on its own dedicated indicator + math confluence
 
     return newPos;
     } finally {
@@ -1968,62 +1942,14 @@ export class DeltaAutoTraderEngine {
   }
 
   /**
-   * Propagates a trade signal from a Leader coin to its designated Follower
-   * User Mandate: "remaing trade nho copie karne dekh lo xrp kaa copie kiyaa hota sol aisa"
-   * Leader XRP -> Follower SOL | Leader DOGE -> Follower AVAX
-   * (Follower NEVER pushes to Leader)
+   * Propagates a trade signal from a Leader coin to its designated Follower (Disabled for pure independent signals)
    */
-  public async propagateLeaderSignal(leaderSymbol: string, leaderSide: 'BUY' | 'SELL', _leaderStrategy: string) {
-    const followerSymbol = DeltaAutoTraderEngine.LEADER_FOLLOWERS[leaderSymbol];
-    if (!followerSymbol) return;
-
-    // Check capacity limit (Strict Max 2 Limit)
-    const maxTrades = this.state.maxConcurrentPositions || 1;
-    const totalCurrentAndPending = this.state.activePositions.length + this.inFlightSymbols.size;
-    if (totalCurrentAndPending >= maxTrades) {
-      console.log(`ℹ️ [LEADER COPY HOLD] Capacity limit (${maxTrades}) reached (active: ${this.state.activePositions.length}, in-flight: ${this.inFlightSymbols.size}). Cannot propagate ${leaderSymbol} ${leaderSide} to ${followerSymbol}.`);
-      return;
-    }
-
-    // Check if follower already has an active position
-    const existingFollower = this.state.activePositions.find(p => p.symbol === followerSymbol);
-    if (existingFollower) {
-      return;
-    }
-
-    // Execute follower copying the leader's trade!
-    console.log(`🚀 [LEADER ➔ FOLLOWER TRADE COPY] Leader ${leaderSymbol} entered ${leaderSide}! Propagating copy trade to ${followerSymbol} (${leaderSide})...`);
-    try {
-      const followerPrice = await deltaExchange.getMarketPrice(followerSymbol);
-      const followerAtr = followerPrice * 0.015;
-      await this.executeNewPosition({
-        symbol: followerSymbol,
-        strategyName: `Leader Copy (${leaderSymbol} ➔ ${followerSymbol})`,
-        side: leaderSide,
-        signalPrice: followerPrice,
-        atr: followerAtr,
-        shadowConfirmedSeconds: 0,
-        executionMode: 'DIRECT',
-      });
-    } catch (e: any) {
-      console.warn(`Failed to propagate leader trade to ${followerSymbol}:`, e?.message || e);
-    }
+  public async propagateLeaderSignal(_leaderSymbol: string, _leaderSide: 'BUY' | 'SELL', _leaderStrategy: string) {
+    // Disabled: Coins trade independently on their dedicated indicators
   }
 
   public async reconcileFollowerPositions() {
-    for (const [leaderSym, followerSym] of Object.entries(DeltaAutoTraderEngine.LEADER_FOLLOWERS)) {
-      const liveLeader = this.state.activePositions.find(p => p.symbol === leaderSym);
-      const liveFollower = this.state.activePositions.find(p => p.symbol === followerSym);
-      if (liveLeader && liveFollower && liveFollower.side !== liveLeader.side) {
-        console.warn(`⚠️ [LEADER CONFLICT DETECTED] Follower ${followerSym} (${liveFollower.side}) conflicts with Leader ${leaderSym} (${liveLeader.side})! Closing conflicting follower...`);
-        const idx = this.state.activePositions.findIndex(p => p.symbol === followerSym);
-        if (idx !== -1) {
-          const currentPrice = await deltaExchange.getMarketPrice(followerSym);
-          await this.closePosition(idx, 'MANUAL_EXIT', currentPrice);
-          console.log(`✅ Closed conflicting follower ${followerSym}. Ready to copy Leader ${leaderSym} (${liveLeader.side})!`);
-        }
-      }
-    }
+    // Disabled: Coins trade independently on their dedicated indicators
   }
 
   // -------------------------------------------------------------
