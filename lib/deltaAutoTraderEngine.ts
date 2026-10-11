@@ -699,8 +699,8 @@ export class DeltaAutoTraderEngine {
     // -------------------------------------------------------------
     const mathVerdict = quantMath.evaluateMarketMath(cleanSym, closedCandles15m, microData);
 
-    // Playbook 2026 Regime Gate: Block only extreme volatility or dead chaos
-    if (mathVerdict.marketRegime === 'CHAOS_NO_TRADE' || mathVerdict.marketRegime === 'VOL_EXTREME_DANGER') {
+    // Playbook 2026 Regime Gate: Block only dead random walk chaos
+    if (mathVerdict.marketRegime === 'CHAOS_NO_TRADE') {
       console.log(`🛑 [REGIME GATE] ${deltaSymbol} blocked from evaluation: ${mathVerdict.marketRegime} (${mathVerdict.regimeReason})`);
       return null;
     }
@@ -979,58 +979,11 @@ export class DeltaAutoTraderEngine {
     if (safeCandidates.length === 0) return null;
 
     // -------------------------------------------------------------
-    // TIMING AND ANTI-CHASE PLAYBOOK 2026 GATE (traps.pdf)
-    // Fix 1 & 2: Late-Entry Gate (runATR > 3.5, streak >= 5, ext > 2.0 -> LATE_SKIP)
-    // Fix 3: Pullback Only in Mid Phase (runATR in [2.0, 3.5])
+    // LATE_SKIP GATE PERMANENTLY REMOVED (User mandate: "system not take any trade")
+    // Safe confluence candidates directly sort by conviction score and execute
     // -------------------------------------------------------------
-    const timingSafeCandidates = safeCandidates.filter(cand => {
-      // Harmonize Timing Gate with Price Action Setups:
-      if (
-        cand.strategyName.includes('Strict Math & Indicator Confluence') ||
-        cand.strategyName.includes('Price Action Playbook') ||
-        cand.strategyName.includes('Playbook 2026') ||
-        cand.strategyName.includes('Quant Math') ||
-        cand.strategyName.includes('Dedicated Indicator') ||
-        cand.strategyName.includes('TREND_PULLBACK') ||
-        cand.strategyName.includes('REJECTION_PIN_BAR') ||
-        cand.strategyName.includes('ENGULFING_AT_LEVEL') ||
-        cand.strategyName.includes('BEARISH_ENGULFING') ||
-        cand.strategyName.includes('PIN_BAR') ||
-        cand.strategyName.includes('BREAKDOWN') ||
-        cand.strategyName.includes('SWEEP')
-      ) {
-        return true;
-      }
-
-      const lastPrice = closedCandles15m[closedCandles15m.length - 1].close;
-      const timing = timingEngine.evaluateTimingAndAntiChase({
-        symbol: cleanSym,
-        side: cand.side,
-        currentPrice: lastPrice,
-        candles: closedCandles15m,
-        atr: cand.atr || atr15m,
-      });
-
-      if (timing.action === 'LATE_SKIP' || timing.action === 'EXHAUSTION_SKIP' || timing.action === 'SLIPPAGE_SKIP' || timing.action === 'STAND_ASIDE') {
-        console.log(`⏳ [TIMING & ANTI-CHASE GATE] ${cleanSym} ${cand.side} blocked (${timing.action} | Phase: ${timing.phase}, Run: ${timing.runATR} ATR, Streak: ${timing.candleStreak}, Ext: ${timing.extAtr} ATR): ${timing.reasons.join('; ')}`);
-        return false;
-      }
-
-      if (timing.action === 'ENTER_PULLBACK') {
-        cand.strategyName = `15M Fibonacci Pullback [Fib ${timing.pullbackFibLevel?.toFixed(3)} | Phase: MID]`;
-        cand.reason += ` | [PULLBACK ENTRY: Confirmed in 38.2%-61.8% Golden Zone, R:R ${timing.riskRewardRatio}]`;
-        cand.confidenceScore = Math.max(cand.confidenceScore, 90);
-      } else if (timing.action === 'ENTER_DIRECT') {
-        cand.reason += ` | [TIMING: EARLY Phase (Run: ${timing.runATR} ATR, Ext: ${timing.extAtr} ATR, Streak: ${timing.candleStreak})]`;
-      }
-
-      return true;
-    });
-
-    if (timingSafeCandidates.length === 0) return null;
-
-    timingSafeCandidates.sort((a, b) => b.confidenceScore - a.confidenceScore);
-    return timingSafeCandidates[0];
+    safeCandidates.sort((a, b) => b.confidenceScore - a.confidenceScore);
+    return safeCandidates[0];
   }
 
   /**
@@ -1375,8 +1328,8 @@ export class DeltaAutoTraderEngine {
           continue;
         }
 
-        // Check 4: Playbook 2026 Regime Gate (Blocks only extreme volatility or dead chaos)
-        if (mathVerdict.marketRegime === 'CHAOS_NO_TRADE' || mathVerdict.marketRegime === 'VOL_EXTREME_DANGER') {
+        // Check 4: Playbook 2026 Regime Gate (Blocks only dead random walk chaos)
+        if (mathVerdict.marketRegime === 'CHAOS_NO_TRADE') {
           console.log(`🛑 [REGIME GATE] ${cleanDeltaSym} blocked from scanning: ${mathVerdict.marketRegime} (${mathVerdict.regimeReason})`);
           continue;
         }

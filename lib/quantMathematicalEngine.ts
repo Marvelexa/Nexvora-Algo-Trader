@@ -586,29 +586,24 @@ export class QuantMathematicalEngine {
     let marketRegime: 'TREND' | 'RANGE' | 'CHAOS_NO_TRADE' | 'VOL_EXTREME_DANGER' = 'RANGE';
     let regimeReason = '';
 
-    // Gate 1: Volatility Extreme Danger (> 95 percentile)
-    if (volPercentile > 95.0) {
-      marketRegime = 'VOL_EXTREME_DANGER';
-      regimeReason = `Extreme Volatility Spike (${volPercentile}%ile > 95%) — Dangerous Slippage`;
-    }
-    // Gate 2: Dead Random Walk Chaos (Very high chop + compressed dead volume)
-    else if (chopIndex > 65.0 && volPercentile < 15.0) {
+    // Gate 1: Dead Random Walk Chaos (Very high chop + compressed dead volume)
+    if (chopIndex > 65.0 && volPercentile < 15.0) {
       marketRegime = 'CHAOS_NO_TRADE';
       regimeReason = `Dead Random Walk Chop (CI: ${chopIndex.toFixed(1)}, Vol: ${volPercentile}%ile)`;
     }
-    // Gate 3: Persistent Trend (Requires strong ADX >= 22 with low chop or high efficiency, or extremely low chop < 38)
-    else if ((adx >= 22.0 && (chopIndex < 50.0 || ker >= 0.28)) || chopIndex < 38.0) {
+    // Gate 2: Active Directional Trend / High Volatility Momentum Expansion
+    else if ((adx >= 20.0 && (chopIndex < 55.0 || ker >= 0.25)) || chopIndex < 42.0 || volPercentile > 90.0) {
       marketRegime = 'TREND';
-      regimeReason = `Active Directional Trend (ADX: ${adx.toFixed(1)}, CI: ${chopIndex.toFixed(1)}, KER: ${ker})`;
+      regimeReason = `Active Directional Momentum (ADX: ${adx.toFixed(1)}, CI: ${chopIndex.toFixed(1)}, Vol: ${volPercentile}%ile)`;
     }
-    // Gate 4: Mean-Reverting Range (Healthy oscillation between support & resistance)
+    // Gate 3: Mean-Reverting Range (Oscillation between support & resistance)
     else {
       marketRegime = 'RANGE';
       regimeReason = `Oscillating Range (CI: ${chopIndex.toFixed(1)}, ADX: ${adx.toFixed(1)}, VR: ${vr})`;
     }
 
-    // If in Danger or Dead Chaos, strictly block trade entries (Capital Preservation)
-    if (marketRegime === 'VOL_EXTREME_DANGER' || marketRegime === 'CHAOS_NO_TRADE') {
+    // Only Dead Chaos blocks trade entries
+    if (marketRegime === 'CHAOS_NO_TRADE') {
       return {
         ...defaultVerdict,
         marketRegime,

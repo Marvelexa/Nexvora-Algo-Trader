@@ -209,31 +209,15 @@ export class TimingAndAntiChaseEngine {
     }
 
     // =========================================================================
-    // FIX 1 & 2: ANTI-CHASE / LATE-ENTRY GATE
-    // Blocks buying after extended runs (e.g. AVAX after 8 green bars)
+    // ANTI-CHASE / TIMING EVALUATION (LATE_SKIP Gate disabled per user directive)
+    // Direct entries allowed with momentum tracking; no trades blocked on late phase
     // =========================================================================
     if (phase === 'LATE') {
-      if (candleStreak >= 5) {
-        reasons.push(`Extended streak of ${candleStreak} consecutive ${side === 'BUY' ? 'green' : 'red'} bars (>= 5 limit)`);
-      }
-      if (runATR > 3.5) {
-        reasons.push(`Extended run of ${runATR} ATR (> 3.5 ATR limit from swing origin $${swingOrigin.toFixed(4)})`);
-      }
-      if (side === 'BUY' && extAtr > 2.0) {
-        reasons.push(`Overextended +${extAtr} ATR above EMA20 (> +2.0 limit)`);
-      }
-      if (side === 'SELL' && extAtr < -2.0) {
-        reasons.push(`Overextended ${extAtr} ATR below EMA20 (< -2.0 limit)`);
-      }
-      if (isExhaustionCandle) {
-        reasons.push(`Exhaustion candle printed: Range=${lastBarRangeAtr} ATR, RejectionWick=${(rejectionWickPct * 100).toFixed(0)}%`);
-      }
-
-      console.log(`🛡️ [LATE_SKIP GATE] ${symbol} ${side} BLOCKED: Move in LATE Phase (Run: ${runATR} ATR, Streak: ${candleStreak}, Ext: ${extAtr} ATR). Waiting for reset.`);
+      reasons.push(`Momentum trend in LATE Phase (Run: ${runATR} ATR, Streak: ${candleStreak}, Ext: ${extAtr} ATR)`);
       return {
-        canEnterDirect: false,
+        canEnterDirect: true,
         canEnterPullback: false,
-        action: 'LATE_SKIP',
+        action: 'ENTER_DIRECT',
         phase: 'LATE',
         extAtr,
         runATR,
@@ -248,12 +232,9 @@ export class TimingAndAntiChaseEngine {
     }
 
     // =========================================================================
-    // FIX 2 & 3: MID PHASE -> PULLBACK ONLY
-    // Direct entries strictly blocked; only Fibonacci 38.2%-61.8% pullbacks allowed
+    // MID PHASE: Pullback or Direct Momentum Allowed
     // =========================================================================
     if (phase === 'MID') {
-      reasons.push(`Move in MID Phase (${runATR} ATR from origin). Direct chase blocked; evaluating Pullback.`);
-
       const pullbackCheck = this.evaluatePullbackSetup({
         symbol,
         side,
@@ -286,11 +267,11 @@ export class TimingAndAntiChaseEngine {
           reasons,
         };
       } else {
-        reasons.push(`Pullback not yet triggered (${pullbackCheck.triggerReason})`);
+        reasons.push(`Direct momentum allowed in MID phase (${runATR} ATR from origin)`);
         return {
-          canEnterDirect: false,
+          canEnterDirect: true,
           canEnterPullback: false,
-          action: 'LATE_SKIP',
+          action: 'ENTER_DIRECT',
           phase: 'MID',
           extAtr,
           runATR,
