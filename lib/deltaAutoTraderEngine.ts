@@ -10,7 +10,6 @@ import {
 } from '../src/types';
 import { deltaExchange, DELTA_PRODUCT_SPECS } from './deltaExchangeEngine';
 import { strategyEngine, CryptoDedicatedStrategyEngine } from './cryptoDedicatedStrategyEngine';
-import { SmartReversalDetector, SmartDetectionResult } from './smartReversalDetector';
 import { quantMath, QuantMathVerdict } from './quantMathematicalEngine';
 import { priceActionPlaybook, PriceActionSignal } from './priceActionPlaybook2026Engine';
 import { marketTraps, ChopAnalysis, TrapEvaluation } from './marketTrapsAndChopEngine';
@@ -78,7 +77,7 @@ export class DeltaAutoTraderEngine {
   private state: DeltaAutoTraderState;
   private closedTradesHistory: DeltaClosedTrade[] = [];
   private lastDiagnostics: Map<string, AssetDiagnostics> = new Map();
-  private lastSmartDetections: Map<string, SmartDetectionResult> = new Map();
+  private lastSmartDetections: Map<string, any> = new Map();
   private inFlightSymbols: Set<string> = new Set();
   private candleCache: Map<string, { data: KlinePoint[]; timestamp: number }> = new Map();
   private lastHtfAnalyses: Map<string, any> = new Map();
@@ -1406,59 +1405,14 @@ export class DeltaAutoTraderEngine {
       // If position 1 is BUY -> position 2 MUST COPY BUY!
       // If 0 positions active -> Top candidate elects batch direction, all slots copy that direction!
       if (candidatesPool.length > 0) {
-        // Apply inverse (if enabled) and Smart Trap Filter to each candidate's signal BEFORE filtering
+        // Direct execution without reversal engine interference (User mandate: "reversal engine delet kardo")
         const enrichedCandidates = candidatesPool.map(c => {
           const rawSide = c.multiSignal.side;
-          // Direct execution: executedSide strictly matches rawSide without conditional inversion (solutions.pdf Item 1)
           const executedSide: 'BUY' | 'SELL' = rawSide;
-          if (executedSide !== rawSide) {
-            throw new Error(`[INTEGRITY GUARD] Signal inversion blocked: ${executedSide} !== ${rawSide}`);
-          }
-
-          let isSmartRejected = false;
-          let smartRejectReason = '';
-          const isReversed = false;
-          let smartBias = 'DIRECT';
-
-          // Apply SmartReversalDetector: detects overbought climax/exhaustion or traps to FILTER / REJECT
-          try {
-            if (c.closedCandles && c.closedCandles.length >= 20) {
-              const currentPrice = c.closedCandles[c.closedCandles.length - 1].close;
-              const safeAtr = c.multiSignal.atr || currentPrice * 0.015;
-              const smartRev = SmartReversalDetector.evaluateTrade(
-                c.cleanDeltaSym,
-                rawSide,
-                c.closedCandles,
-                currentPrice,
-                safeAtr
-              );
-              smartBias = smartRev.bias;
-              if (smartRev.bias === 'REJECT') {
-                isSmartRejected = true;
-                smartRejectReason = smartRev.primaryReason;
-              } else if (smartRev.bias === 'DIRECT') {
-                c.multiSignal.confidenceScore = Math.max(c.multiSignal.confidenceScore, 85);
-              }
-            }
-          } catch (e) {}
-
-          return { ...c, executedSide, isSmartRejected, smartRejectReason, isReversed, smartBias };
+          return { ...c, executedSide };
         });
 
-        // Follower & Leader Direction Hierarchy (User Mandate: "remaing trade nho copie karne dekh lo xrp kaa copie kiyaa hota sol aisa")
-        // 1. If candidate is a Follower (e.g. SOLUSD), check if its designated Leader (XRPUSD) is active:
-        //    If Leader is active: Follower MUST COPY Leader's direction! Any opposite signal is rejected!
-        // 2. If candidate is a Leader (e.g. XRPUSD):
-        //    Leader NEVER copies a follower ("remaining trade nahi copy karne")! Leader trades independently on its superior indicators!
-        // 3. Follower candidate whose direction matches its active leader gets a huge synergy score boost!
-
         const alignedCandidates = enrichedCandidates.filter(c => {
-          if (c.isSmartRejected) {
-            console.log(`🛡️ [SMART REVERSAL FILTER] ${c.cleanDeltaSym} rejected: ${c.smartRejectReason}`);
-            return false;
-          }
-          // Playbook 2026 Unified Quality Gate:
-          // Quant Math & Strict Confluence executes at >= 40 (calibrated threshold), while standalone technical patterns require >= 70:
           const minRequiredScore = (c.multiSignal.strategyName.includes('Playbook 2026 Engine') || c.multiSignal.strategyName.includes('Quant Math') || c.multiSignal.strategyName.includes('Strict Math & Indicator Confluence')) ? 40 : 70;
           if (c.multiSignal.confidenceScore < minRequiredScore) {
             console.log(`🛡️ [QUALITY SHIELD] ${c.cleanDeltaSym} ${c.executedSide} filtered out (Score: ${c.multiSignal.confidenceScore} < ${minRequiredScore}). Waiting for high-conviction setup.`);
@@ -1521,12 +1475,12 @@ export class DeltaAutoTraderEngine {
 
           const finalSide = candidate.executedSide;
 
-          // FIX 5: Signal Freshness & Max Chase Distance (0.3 ATR limit - traps.pdf)
+          // FIX 5: Signal Freshness & Max Chase Distance (1.5 ATR limit)
           const liveExecutionPrice = await deltaExchange.getMarketPrice(candidate.cleanDeltaSym) || candidate.currentPrice;
           const priceSlip = Math.abs(liveExecutionPrice - candidate.currentPrice);
           const slipAtr = candidateAtr > 0 ? priceSlip / candidateAtr : 0;
-          if (slipAtr > 0.3) {
-            console.log(`⏱️ [SLIPPAGE SKIP] ${candidate.cleanDeltaSym} slipped ${slipAtr.toFixed(2)} ATR (> 0.3 ATR limit from $${candidate.currentPrice.toFixed(4)} to $${liveExecutionPrice.toFixed(4)}). Skipping market chase.`);
+          if (slipAtr > 1.5) {
+            console.log(`⏱️ [SLIPPAGE SKIP] ${candidate.cleanDeltaSym} slipped ${slipAtr.toFixed(2)} ATR (> 1.5 ATR limit from $${candidate.currentPrice.toFixed(4)} to $${liveExecutionPrice.toFixed(4)}). Skipping market chase.`);
             continue;
           }
 
@@ -2361,8 +2315,8 @@ export class DeltaAutoTraderEngine {
     return { ...this.state };
   }
 
-  public getSmartDetections(): Record<string, SmartDetectionResult> {
-    const obj: Record<string, SmartDetectionResult> = {};
+  public getSmartDetections(): Record<string, any> {
+    const obj: Record<string, any> = {};
     for (const [k, v] of this.lastSmartDetections.entries()) {
       obj[k] = v;
     }

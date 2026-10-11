@@ -520,6 +520,7 @@ export class MarketTrapsAndChopEngine {
       // Breakouts target broken levels, dynamic pullbacks/indicators follow trends, and indicator signals do not trade static S/R bounces
       const isBreakout = setupType === 'BREAKOUT_RETEST_GO' || setupType?.includes('BREAKOUT') || setupType?.includes('Breakout');
       const isDynamicOrIndicator = setupType?.includes('Dedicated Indicator') ||
+                                   setupType?.includes('Strict Math & Indicator Confluence') ||
                                    setupType?.includes('Playbook 2026 Engine') ||
                                    setupType?.includes('Quant Math') ||
                                    setupType?.includes('TREND_PULLBACK') ||
@@ -570,6 +571,7 @@ export class MarketTrapsAndChopEngine {
     // Thin order book, rvol < 0.35 = easy to manipulate, avoid breakout chasing
     // -------------------------------------------------------------------------
     const isReversalOrPullback = setupType === 'TREND_PULLBACK' ||
+      setupType?.includes('Strict Math & Indicator Confluence') ||
       setupType?.includes('Reversal & Zigzag') ||
       setupType?.includes('REJECTION_PIN_BAR') ||
       setupType?.includes('ENGULFING_AT_LEVEL') ||
@@ -591,21 +593,39 @@ export class MarketTrapsAndChopEngine {
     // buying pullbacks while price is dumping from the wick is trapped.
     // -------------------------------------------------------------------------
     if (side === 'BUY') {
-      const recentSlice = candles.slice(Math.max(0, n - 6));
-      const maxHigh = Math.max(...recentSlice.map(c => c.high));
-      for (const c of recentSlice) {
-        const barRange = Math.max(0.000001, c.high - c.low);
-        const upperWick = c.high - Math.max(c.open, c.close);
-        const body = Math.abs(c.close - c.open);
-        if (c.high >= maxHigh * 0.998 && (upperWick >= body * 1.3 || upperWick >= atr * 0.5) && barRange >= atr * 0.9) {
-          const currentClose = candles[n - 1].close;
-          if (currentClose < c.high - atr * 0.4) {
-            return {
-              isBlockedByTrap: true,
-              trapType: 'FAKEOUT',
-              trapReason: `[TRAP 8: BLOW-OFF EXHAUSTION SPIKE] Recent pump to $${c.high.toFixed(4)} has ${(upperWick / barRange * 100).toFixed(0)}% rejection upper wick. Waterfall selloff in progress; late buyers are trapped.`,
-              recommendedAction: 'STAND_ASIDE',
-            };
+      const isReversalOrSupportOrBreakout = setupType?.includes('LIQUIDITY_SWEEP') ||
+        setupType?.includes('REJECTION_PIN_BAR') ||
+        setupType?.includes('ENGULFING_AT_LEVEL') ||
+        setupType?.includes('Reversal & Zigzag') ||
+        setupType?.includes('CLIMAX') ||
+        setupType?.includes('Divergence') ||
+        setupType?.includes('Breakout') ||
+        setupType?.includes('BREAKOUT') ||
+        setupType?.includes('Strict Math & Indicator Confluence') ||
+        setupType?.includes('Quant Math') ||
+        setupType?.includes('Dedicated Indicator') ||
+        setupType?.includes('Playbook 2026 Engine') ||
+        levelType === 'SUPPORT' ||
+        (lowerWick / barRange) >= 0.25 ||
+        lastBar.close > lastBar.open;
+
+      if (!isReversalOrSupportOrBreakout) {
+        const recentSlice = candles.slice(Math.max(0, n - 6));
+        const maxHigh = Math.max(...recentSlice.map(c => c.high));
+        for (const c of recentSlice) {
+          const barRange = Math.max(0.000001, c.high - c.low);
+          const upperWick = c.high - Math.max(c.open, c.close);
+          const body = Math.abs(c.close - c.open);
+          if (c.high >= maxHigh * 0.998 && (upperWick / barRange >= 0.40) && upperWick >= atr * 0.5 && barRange >= atr * 0.9) {
+            const currentClose = candles[n - 1].close;
+            if (currentClose < c.high - atr * 0.4) {
+              return {
+                isBlockedByTrap: true,
+                trapType: 'FAKEOUT',
+                trapReason: `[TRAP 8: BLOW-OFF EXHAUSTION SPIKE] Recent pump to $${c.high.toFixed(4)} has ${(upperWick / barRange * 100).toFixed(0)}% rejection upper wick. Waterfall selloff in progress; late buyers are trapped.`,
+                recommendedAction: 'STAND_ASIDE',
+              };
+            }
           }
         }
       }
@@ -620,6 +640,7 @@ export class MarketTrapsAndChopEngine {
         setupType?.includes('BREAKOUT') ||
         setupType?.includes('BREAKDOWN') ||
         setupType?.includes('Resistance') ||
+        setupType?.includes('Strict Math & Indicator Confluence') ||
         setupType?.includes('Playbook 2026 Engine') ||
         setupType?.includes('Quant Math') ||
         setupType?.includes('Dedicated Indicator') ||
