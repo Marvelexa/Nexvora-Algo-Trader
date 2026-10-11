@@ -759,40 +759,76 @@ export class DeltaAutoTraderEngine {
         evalResult = strategyEngine.evaluateSymbol(symbol, closedCandles15m);
       } catch (e) {}
 
-      const indicatorSide = evalResult?.signal;
-      const indicatorQuality = evalResult?.diagnostics?.qualityScore || confluence.confluenceScore;
+      const indicatorSide = evalResult?.signal; // 'BUY' | 'SELL' | null
+      const candlePattern = (evalResult?.diagnostics?.lastCandlePattern || '').trim();
+      const candlePatternLower = candlePattern.toLowerCase();
+      const isCandleBearish = candlePatternLower.includes('bearish') || 
+                              candlePatternLower.includes('shooting star') || 
+                              candlePatternLower.includes('evening star') ||
+                              candlePatternLower.includes('tweezer top') ||
+                              candlePatternLower.includes('rejection wick');
+      const isCandleBullish = candlePatternLower.includes('bullish') || 
+                              candlePatternLower.includes('hammer') || 
+                              candlePatternLower.includes('morning star') ||
+                              candlePatternLower.includes('tweezer bottom') ||
+                              candlePatternLower.includes('support absorption');
 
-      // 1. HARD MANDATORY INDICATOR CONFLUENCE GATE:
-      // Determine affirmative indicator stance:
-      const isIndicatorBullish = confluence.trendDirection === 'BULLISH' || confluence.isMacroBullish || indicatorSide === 'BUY' || confluence.allowsLong;
-      const isIndicatorBearish = confluence.trendDirection === 'BEARISH' || confluence.isMacroBearish || indicatorSide === 'SELL' || confluence.allowsShort;
+      const waveValue = evalResult?.diagnostics?.waveValue ?? 0;
+      const xrpHist = evalResult?.diagnostics?.xrpHud?.scaledHist;
+      const isWaveBearish = waveValue < -5 || (xrpHist !== undefined && xrpHist < -10);
+      const isWaveBullish = waveValue > 5 || (xrpHist !== undefined && xrpHist > 10);
 
-      // Strict User Mandate: Never counter-trade an opposing indicator trend!
-      // If indicators/trend are BULLISH, NEVER execute a SELL!
-      if (mathSide === 'SELL' && isIndicatorBullish) {
-        console.log(`🛡️ [CONFLUENCE GUARD] ${cleanSym} SELL blocked: Indicator Signal is BULLISH (Trend=${confluence.trendDirection}, MacroBullish=${confluence.isMacroBullish}, Indicator=${indicatorSide || 'NONE'}). Never short when Buy signal is active!`);
-        return null;
+      // Determine active SELL signal stance:
+      const hasActiveSellSignal = indicatorSide === 'SELL' || 
+                                  isCandleBearish || 
+                                  isWaveBearish || 
+                                  Boolean(paVerdict && paVerdict.side === 'SELL');
+
+      // Determine active BUY signal stance:
+      const hasActiveBuySignal = indicatorSide === 'BUY' || 
+                                 isCandleBullish || 
+                                 isWaveBullish || 
+                                 Boolean(paVerdict && paVerdict.side === 'BUY');
+
+      // 1. HARD MANDATORY CONFLUENCE VETO (User Mandate: "Signal hai SELL kar rhe ho BUY — NEVER trade against signal!")
+      if (mathSide === 'BUY') {
+        if (hasActiveSellSignal) {
+          const reasons: string[] = [];
+          if (indicatorSide === 'SELL') reasons.push('Dedicated Indicator SELL');
+          if (isCandleBearish) reasons.push(`Candle ${candlePattern}`);
+          if (isWaveBearish) reasons.push(`Wave ${waveValue.toFixed(1)}`);
+          if (paVerdict && paVerdict.side === 'SELL') reasons.push(`PA ${paVerdict.setupType} SELL`);
+          console.log(`🛡️ [CONFLUENCE VETO] ${cleanSym} BUY blocked: Market has active SELL signals (${reasons.join(', ')}). Never buy when Sell signal is active!`);
+          return null;
+        }
+
+        const isTrendPermitted = confluence.trendDirection !== 'BEARISH' && !confluence.isMacroBearish;
+        if (!isTrendPermitted) {
+          console.log(`🛡️ [CONFLUENCE VETO] ${cleanSym} BUY blocked: Macro Trend is BEARISH (Trend=${confluence.trendDirection}). Standing aside.`);
+          return null;
+        }
       }
 
-      // If indicators/trend are BEARISH, NEVER execute a BUY!
-      if (mathSide === 'BUY' && isIndicatorBearish) {
-        console.log(`🛡️ [CONFLUENCE GUARD] ${cleanSym} BUY blocked: Indicator Signal is BEARISH (Trend=${confluence.trendDirection}, MacroBearish=${confluence.isMacroBearish}, Indicator=${indicatorSide || 'NONE'}). Never long when Sell signal is active!`);
-        return null;
+      if (mathSide === 'SELL') {
+        if (hasActiveBuySignal) {
+          const reasons: string[] = [];
+          if (indicatorSide === 'BUY') reasons.push('Dedicated Indicator BUY');
+          if (isCandleBullish) reasons.push(`Candle ${candlePattern}`);
+          if (isWaveBullish) reasons.push(`Wave ${waveValue.toFixed(1)}`);
+          if (paVerdict && paVerdict.side === 'BUY') reasons.push(`PA ${paVerdict.setupType} BUY`);
+          console.log(`🛡️ [CONFLUENCE VETO] ${cleanSym} SELL blocked: Market has active BUY signals (${reasons.join(', ')}). Never short when Buy signal is active!`);
+          return null;
+        }
+
+        const isTrendPermitted = confluence.trendDirection !== 'BULLISH' && !confluence.isMacroBullish;
+        if (!isTrendPermitted) {
+          console.log(`🛡️ [CONFLUENCE VETO] ${cleanSym} SELL blocked: Macro Trend is BULLISH (Trend=${confluence.trendDirection}). Standing aside.`);
+          return null;
+        }
       }
 
-      // Indicator Confluence Check:
-      // For BUY: Either indicators are affirmatively bullish OR aligned via RSI/MACD (and NOT bearish)
-      // For SELL: Either indicators are affirmatively bearish OR aligned via RSI/MACD (and NOT bullish)
-      const isIndicatorConfirmed = mathSide === 'BUY'
-        ? (isIndicatorBullish || confluence.isRsiBullish || Boolean(confluence.macd?.isBullish)) && !isIndicatorBearish
-        : (isIndicatorBearish || confluence.isRsiBearish || Boolean(confluence.macd?.isBearish)) && !isIndicatorBullish;
-
-      if (!isIndicatorConfirmed) {
-        console.log(`🛡️ [CONFLUENCE GUARD] ${cleanSym} ${mathSide} blocked: Institutional Indicators do not confirm ${mathSide} (Trend=${confluence.trendDirection}, Indicator=${indicatorSide || 'NONE'}). Standing aside.`);
-        return null;
-      }
-
-      const isIndicatorAligned = true;
+      const isIndicatorAligned = (mathSide === 'BUY' && (hasActiveBuySignal || confluence.allowsLong || confluence.trendDirection === 'BULLISH')) ||
+                                 (mathSide === 'SELL' && (hasActiveSellSignal || confluence.allowsShort || confluence.trendDirection === 'BEARISH'));
 
       // 2. Candlestick Anatomy & Price Action Verification
       // Solo candle trades are DELETED. Candle shapes ONLY serve as confirmation/timing!
