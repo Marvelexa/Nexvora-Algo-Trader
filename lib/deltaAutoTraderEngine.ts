@@ -808,25 +808,47 @@ export class DeltaAutoTraderEngine {
         candleTriggerTag = ` + PA ${paVerdict.setupType}`;
       }
 
-      // Symmetric Trap Protection: Do NOT SELL into Support Floor or BUY into Resistance Ceiling
-      const isBlockedByFloor = mathSide === 'SELL' && (
-        mathVerdict.isAtSupport ||
-        mathVerdict.supportBounceConfirmed ||
-        mathVerdict.reasons.some(r => r.includes('Support') || r.includes('FLOOR BOUNCE'))
-      );
-      const isBlockedByCeiling = mathSide === 'BUY' && (
-        mathVerdict.isAtResistance ||
-        mathVerdict.resistanceRejectConfirmed ||
-        mathVerdict.reasons.some(r => r.includes('Resistance') || r.includes('CEILING REJECT'))
-      );
+      // Symmetric Trap Protection:
+      // 1. Do NOT BUY into Overbought Climax (RSI >= 70, Fisher >= 1.5, Z >= 1.6, or testing Resistance)
+      // 2. Do NOT SELL into Oversold Capitulation (RSI <= 30, Fisher <= -1.5, Z <= -1.6, or testing Support)
+      const currentRsi = rsi15mArr[rsi15mArr.length - 1] || 50;
 
-      if (isBlockedByFloor) {
-        console.log(`🛡️ [TRAP SHIELD] ${cleanSym} SELL dropped: Price is testing/bouncing at Support Floor ($${mathVerdict.nearestSupport || 'Support'}).`);
-        return null;
+      if (mathSide === 'BUY') {
+        const isRsiOverbought = currentRsi >= 70;
+        const isGaussianOverbought = (mathVerdict.zScore && mathVerdict.zScore >= 1.6) || (mathVerdict.fisherTransform && mathVerdict.fisherTransform >= 1.5);
+        const isClimaxReason = mathVerdict.reasons.some(r => r.includes('Overbought') || r.includes('Climax Fade') || r.includes('Long Flush'));
+        const isBlockedByCeiling = mathVerdict.isAtResistance ||
+          mathVerdict.resistanceRejectConfirmed ||
+          mathVerdict.reasons.some(r => r.includes('Resistance') || r.includes('CEILING REJECT')) ||
+          Boolean(paVerdict && paVerdict.locationReason?.includes('Resistance') && paVerdict.confluenceScore >= 70);
+
+        if (isRsiOverbought || isGaussianOverbought || isClimaxReason) {
+          console.log(`🛡️ [OVERBOUGHT TRAP SHIELD] ${cleanSym} BUY blocked: Market is Overbought/Exhausted (RSI=${currentRsi.toFixed(1)}, Z=${mathVerdict.zScore}, Fisher=${mathVerdict.fisherTransform}). Never buy at blow-off top!`);
+          return null;
+        }
+        if (isBlockedByCeiling) {
+          console.log(`🛡️ [TRAP SHIELD] ${cleanSym} BUY dropped: Price is testing/rejecting at Resistance Ceiling ($${mathVerdict.nearestResistance || 'Resistance'}).`);
+          return null;
+        }
       }
-      if (isBlockedByCeiling) {
-        console.log(`🛡️ [TRAP SHIELD] ${cleanSym} BUY dropped: Price is testing/rejecting at Resistance Ceiling ($${mathVerdict.nearestResistance || 'Resistance'}).`);
-        return null;
+
+      if (mathSide === 'SELL') {
+        const isRsiOversold = currentRsi <= 30;
+        const isGaussianOversold = (mathVerdict.zScore && mathVerdict.zScore <= -1.6) || (mathVerdict.fisherTransform && mathVerdict.fisherTransform <= -1.5);
+        const isCapitulationReason = mathVerdict.reasons.some(r => r.includes('Oversold') || r.includes('Capitulation') || r.includes('Short Squeeze'));
+        const isBlockedByFloor = mathVerdict.isAtSupport ||
+          mathVerdict.supportBounceConfirmed ||
+          mathVerdict.reasons.some(r => r.includes('Support') || r.includes('FLOOR BOUNCE')) ||
+          Boolean(paVerdict && paVerdict.locationReason?.includes('Support') && paVerdict.confluenceScore >= 70);
+
+        if (isRsiOversold || isGaussianOversold || isCapitulationReason) {
+          console.log(`🛡️ [OVERSOLD TRAP SHIELD] ${cleanSym} SELL blocked: Market is Oversold/Dumped (RSI=${currentRsi.toFixed(1)}, Z=${mathVerdict.zScore}, Fisher=${mathVerdict.fisherTransform}). Never sell at capitulation bottom!`);
+          return null;
+        }
+        if (isBlockedByFloor) {
+          console.log(`🛡️ [TRAP SHIELD] ${cleanSym} SELL dropped: Price is testing/bouncing at Support Floor ($${mathVerdict.nearestSupport || 'Support'}).`);
+          return null;
+        }
       }
 
       // 3. Synthesize Multi-Layer Strict Confluence Score
