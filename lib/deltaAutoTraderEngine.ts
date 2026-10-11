@@ -6,12 +6,10 @@ import {
   DeltaAutoTraderState, 
   AssetDiagnostics,
   KlinePoint,
-  DeltaShadowCandidate,
   TradeExecutionMode
 } from '../src/types';
 import { deltaExchange, DELTA_PRODUCT_SPECS } from './deltaExchangeEngine';
 import { strategyEngine, CryptoDedicatedStrategyEngine } from './cryptoDedicatedStrategyEngine';
-// Shadow Gate REMOVED per user directive: "shadow gate hataa de apne system se hi"
 import { SmartReversalDetector, SmartDetectionResult } from './smartReversalDetector';
 import { quantMath, QuantMathVerdict } from './quantMathematicalEngine';
 import { priceActionPlaybook, PriceActionSignal } from './priceActionPlaybook2026Engine';
@@ -1724,96 +1722,6 @@ export class DeltaAutoTraderEngine {
     };
   }
 
-  /**
-   * Converts a resting breakout order that was filled natively on Delta Exchange into an active DeltaPosition
-   */
-  public async confirmBreakoutPosition(params: {
-    candidate: DeltaShadowCandidate;
-    fillPrice: number;
-  }): Promise<DeltaPosition | null> {
-    const sym = params.candidate.symbol;
-    const existing = this.state.activePositions.find(
-      p => p.symbol === sym || p.symbol === sym.replace('USD', 'USDT')
-    );
-    if (existing) {
-      console.log(`⚠️ Position for ${sym} already exists in activePositions. Skipping duplicate confirmation.`);
-      return existing;
-    }
-
-    // Capacity limit based on account balance (User Mandate: "trade do only one limit")
-    const maxTrades = this.state.maxConcurrentPositions || 1;
-    if (this.state.activePositions.length >= maxTrades) {
-      console.warn(`🛑 Maximum concurrent positions limit (${maxTrades}) reached. Cannot execute new position for ${params.candidate.symbol}.`);
-      return null;
-    }
-
-    const sizing = await this.calculateDynamicTradeMargin(maxTrades);
-    const marginUSD = sizing.marginUSD;
-    const notionalUSD = sizing.notionalUSD;
-    const fillPrice = params.candidate.pendingOrderPrice || params.fillPrice;
-    const rawQuantity = notionalUSD / fillPrice;
-    const quantity = parseFloat(rawQuantity.toFixed(4));
-
-    // Strict User Mandate: $1.50 Max Loss, $3.00 Profit per trade
-    const targetProfitUSD = 6.00;
-    const maxLossUSD = 3.00;
-    const targetPriceDistance = params.candidate.targetMult
-      ? params.candidate.targetMult * params.candidate.atr
-      : Math.max(2.5 * params.candidate.atr, fillPrice * 0.01);
-    const slPriceDistance = params.candidate.slMult
-      ? params.candidate.slMult * params.candidate.atr
-      : Math.max(1.5 * params.candidate.atr, fillPrice * 0.005);
-    const takeProfitPrice = params.candidate.virtualTP
-      ? params.candidate.virtualTP
-      : (params.candidate.side === 'BUY'
-          ? fillPrice + targetPriceDistance
-          : fillPrice - targetPriceDistance);
-    const stopLossPrice = params.candidate.virtualSL
-      ? params.candidate.virtualSL
-      : (params.candidate.side === 'BUY'
-          ? fillPrice - slPriceDistance
-          : fillPrice + slPriceDistance);
-
-    // Explicitly attach native Delta Exchange position bracket order so web dashboard displays exact TP/SL numbers
-    if (this.state.mode !== 'SIMULATION_PAPER') {
-      try {
-        await deltaExchange.setBracketOrder(params.candidate.symbol, stopLossPrice, takeProfitPrice);
-        console.log(`🎯 [DELTA BRACKET SYNC] Confirmed breakout bracket on ${params.candidate.symbol}: SL=$${stopLossPrice.toFixed(4)}, TP=$${takeProfitPrice.toFixed(4)}`);
-      } catch (err: any) {
-        console.warn(`⚠️ [DELTA BRACKET NOTE] ${params.candidate.symbol}:`, err?.message || err);
-      }
-    }
-
-    const newPos: DeltaPosition = {
-      id: 'pos-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
-      symbol: params.candidate.symbol,
-      side: params.candidate.side,
-      entryPrice: fillPrice,
-      currentPrice: params.fillPrice,
-      quantity,
-      marginUSD,
-      notionalUSD,
-      leverage: this.state.leverage,
-      takeProfitPrice,
-      stopLossPrice,
-      initialStopLossPrice: stopLossPrice,
-      atr: params.candidate.atr,
-      isBreakevenLocked: false,
-      pnlUSD: 0,
-      pnlPercent: 0,
-      entryTime: Date.now(),
-      strategyName: params.candidate.strategyName,
-      shadowConfirmedSeconds: params.candidate.qualifyingSeconds,
-    };
-
-    this.state.activePositions.push(newPos);
-    this.state.totalTradesCount += 1;
-    this.saveState();
-
-    console.log(`🎯 Breakout trade confirmed: ${params.candidate.symbol} ${params.candidate.side} @ $${fillPrice.toFixed(2)} (Delta Order: ${params.candidate.pendingDeltaOrderId || 'native'}) | TP: $${takeProfitPrice.toFixed(2)} | SL: $${stopLossPrice.toFixed(2)}`);
-    return newPos;
-  }
-
   public async executeNewPosition(params: {
     symbol: string;
     strategyName: string;
@@ -2507,11 +2415,6 @@ export class DeltaAutoTraderEngine {
       obj[k] = v;
     }
     return obj;
-  }
-
-  // Shadow Gate simulation REMOVED
-  public async simulateShadowBranch(_symbol: string, _branch: string) {
-    return { decision: null };
   }
 
   public resetPositions() {
