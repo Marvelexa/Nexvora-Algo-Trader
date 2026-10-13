@@ -149,7 +149,7 @@ export interface DeltaClosedTrade {
   pnlUSD: number;
   pnlPercent: number;
   rMultiple: number;
-  exitReason: 'TARGET_HIT' | 'STOP_LOSS_HIT' | 'BREAKEVEN_HIT' | 'MANUAL_EXIT' | 'EXCHANGE_CLOSED' | 'REVERSAL_PROFIT_LOCKED' | 'TIME_STOP_EXIT' | 'EXHAUSTION_EXIT';
+  exitReason: 'TARGET_HIT' | 'STOP_LOSS_HIT' | 'BREAKEVEN_HIT' | 'MANUAL_EXIT' | 'EXCHANGE_CLOSED' | 'REVERSAL_PROFIT_LOCKED' | 'TIME_STOP_EXIT' | 'EXHAUSTION_EXIT' | 'REVERSAL_EXIT_EARLY';
   entryTime: number;
   exitTime: number;
   durationMs: number;
@@ -263,6 +263,18 @@ export interface AssetDiagnostics {
   chopAnalysis?: any;
   trapAnalysis?: any;
   timingAnalysis?: any;
+  activeCandleGate?: {
+    barColor: 'GREEN' | 'RED' | 'DOJI';
+    barOpen: number;
+    currentPrice: number;
+    diffUSD: number;
+    diffPct: number;
+    isVetoActive: boolean;
+    vetoReason: string;
+    nextBarCloseMs: number;
+    secondsToClose: number;
+    executionStatus: 'IN_TRADE' | 'ARMED_WAITING_GATE' | 'READY_TO_ENTER' | 'SCANNING_BUILDING' | 'WAIT';
+  };
   xrpHud?: {
     winRate: string;
     netProfit: string;

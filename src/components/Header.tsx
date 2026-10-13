@@ -10,13 +10,15 @@ import {
   ShieldCheck, 
   Zap,
   TrendingUp,
-  DollarSign
+  DollarSign,
+  Film
 } from 'lucide-react';
 import { ExchangeStatus, AssetBalance, LatencyMetric } from '../types';
 
 interface HeaderProps {
   exchangeStatus: ExchangeStatus | null;
   onOpenCredentials: () => void;
+  onOpenMotionVideo?: () => void;
   isAudioEnabled: boolean;
   onToggleAudio: () => void;
   isRefreshing: boolean;
@@ -33,6 +35,7 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({
   exchangeStatus,
   onOpenCredentials,
+  onOpenMotionVideo,
   isAudioEnabled,
   onToggleAudio,
   isRefreshing,
@@ -108,6 +111,16 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Right: Exchange API Key Connection & Controls */}
         <div className="flex items-center flex-wrap gap-2">
+          {/* Motion Graphic Video Presentation button */}
+          <button
+            onClick={onOpenMotionVideo}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-gradient-to-r from-cyan-950 via-slate-900 to-slate-900 hover:from-cyan-900 hover:to-slate-800 text-cyan-300 border border-cyan-500/50 hover:border-cyan-400 shadow-md shadow-cyan-950/50 cursor-pointer transition-all hover:scale-105"
+            title="Watch Code-Generated Motion Graphics Video Presentation"
+          >
+            <Film className="h-3.5 w-3.5 text-cyan-400 animate-pulse" />
+            <span className="tracking-wide">🎬 Project Video</span>
+          </button>
+
           {/* Exchange credentials pill */}
           <button
             onClick={onOpenCredentials}

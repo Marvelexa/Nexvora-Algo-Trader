@@ -1057,10 +1057,12 @@ export const DeltaAutoTraderCard: React.FC<DeltaAutoTraderCardProps> = ({ onSele
                         </td>
                         <td className="py-2.5 px-3">
                           <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            t.exitReason === 'TARGET_HIT'
+                            t.exitReason === 'TARGET_HIT' || t.exitReason === 'REVERSAL_PROFIT_LOCKED'
                               ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                               : t.exitReason === 'BREAKEVEN_HIT'
                               ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
+                              : t.exitReason === 'REVERSAL_EXIT_EARLY'
+                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                               : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
                           }`}>
                             {t.exitReason}

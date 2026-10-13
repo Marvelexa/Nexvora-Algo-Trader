@@ -1,0 +1,1381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Delta Exchange Cryptobot - Motion Graphics Video</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+    body {
+      background-color: #060913;
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", monospace, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+    .video-container {
+      position: relative;
+      width: 100vw;
+      max-width: 1280px;
+      aspect-ratio: 16 / 9;
+      background: #080d1a;
+      border-radius: 12px;
+      box-shadow: 0 25px 60px -15px rgba(0, 240, 255, 0.15), 0 0 0 1px rgba(0, 240, 255, 0.2);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      cursor: pointer;
+    }
+    /* Controls Bar */
+    .controls-overlay {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: linear-gradient(to top, rgba(8, 13, 26, 0.95) 0%, rgba(8, 13, 26, 0.7) 70%, transparent 100%);
+      padding: 16px 20px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      transition: opacity 0.3s ease;
+      z-index: 20;
+    }
+    .video-container:hover .controls-overlay,
+    .controls-overlay.visible {
+      opacity: 1;
+    }
+    /* Scrubber Timeline */
+    .timeline-container {
+      position: relative;
+      width: 100%;
+      height: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+    }
+    .timeline-track {
+      position: absolute;
+      width: 100%;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 2px;
+      overflow: hidden;
+      transition: height 0.15s ease;
+    }
+    .timeline-container:hover .timeline-track {
+      height: 6px;
+    }
+    .timeline-progress {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #00f0ff, #00ff88);
+      position: relative;
+    }
+    .timeline-handle {
+      position: absolute;
+      top: 50%;
+      left: 0%;
+      width: 12px;
+      height: 12px;
+      background: #ffffff;
+      box-shadow: 0 0 8px #00f0ff;
+      border-radius: 50%;
+      transform: translate(-50%, -50%) scale(0);
+      transition: transform 0.15s ease;
+      pointer-events: none;
+    }
+    .timeline-container:hover .timeline-handle {
+      transform: translate(-50%, -50%) scale(1);
+    }
+    /* Scene Markers */
+    .scene-marker {
+      position: absolute;
+      top: 2px;
+      width: 2px;
+      height: 8px;
+      background: rgba(255, 255, 255, 0.4);
+      pointer-events: none;
+    }
+    /* Button Controls Row */
+    .controls-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .controls-left, .controls-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .btn {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #f1f5f9;
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+    }
+    .btn:hover {
+      background: rgba(0, 240, 255, 0.18);
+      border-color: #00f0ff;
+      color: #00f0ff;
+    }
+    .btn.active {
+      background: #00f0ff;
+      color: #060913;
+      border-color: #00f0ff;
+      font-weight: 600;
+    }
+    .time-display {
+      font-family: monospace;
+      font-size: 13px;
+      color: #94a3b8;
+    }
+    /* Scene Pills */
+    .scene-pills {
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+    }
+    .scene-pill {
+      font-size: 11px;
+      padding: 4px 8px;
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 4px;
+      color: #94a3b8;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.2s ease;
+    }
+    .scene-pill:hover, .scene-pill.active {
+      background: rgba(0, 240, 255, 0.15);
+      border-color: #00f0ff;
+      color: #00f0ff;
+    }
+    /* Big Center Play Overlay */
+    .play-overlay {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      background: rgba(0, 240, 255, 0.2);
+      border: 2px solid #00f0ff;
+      backdrop-filter: blur(8px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: 0 0 30px rgba(0, 240, 255, 0.4);
+      transition: all 0.2s ease;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .play-overlay.show {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .play-overlay:hover {
+      transform: translate(-50%, -50%) scale(1.1);
+      background: rgba(0, 240, 255, 0.35);
+    }
+    .play-overlay svg {
+      width: 32px;
+      height: 32px;
+      fill: #00f0ff;
+      margin-left: 4px;
+    }
+    /* Recording Banner */
+    .rec-badge {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      background: rgba(255, 50, 70, 0.2);
+      border: 1px solid #ff3246;
+      color: #ff3246;
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-weight: 700;
+      animation: pulse 1s infinite;
+    }
+    .rec-badge.recording {
+      display: flex;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="video-container" id="videoBox">
+    <canvas id="videoCanvas" width="1280" height="720"></canvas>
+    
+    <div class="play-overlay" id="playOverlay" title="Play Video">
+      <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+    </div>
+
+    <div class="controls-overlay" id="controlsBar">
+      <!-- Progress Bar -->
+      <div class="timeline-container" id="timeline">
+        <div class="timeline-track">
+          <div class="timeline-progress" id="progress"></div>
+        </div>
+        <div class="timeline-handle" id="scrubberHandle"></div>
+        <!-- Scene Markers injected by JS -->
+      </div>
+
+      <div class="controls-row">
+        <div class="controls-left">
+          <button class="btn" id="playBtn">
+            <span id="playIcon">▶</span> <span id="playText">Play</span>
+          </button>
+          <button class="btn" id="restartBtn" title="Restart">↺</button>
+          <div class="time-display" id="timeDisplay">00:00 / 00:36</div>
+          <button class="btn" id="soundBtn" title="Toggle Sound">🔊 Audio Synth: ON</button>
+          <div class="rec-badge" id="recBadge">● REC EXPORTING</div>
+        </div>
+
+        <!-- Scene Jump Buttons -->
+        <div class="scene-pills">
+          <div class="scene-pill active" onclick="jumpToScene(0)">01: Boot</div>
+          <div class="scene-pill" onclick="jumpToScene(1)">02: Dual-Engine</div>
+          <div class="scene-pill" onclick="jumpToScene(2)">03: Trap Shield</div>
+          <div class="scene-pill" onclick="jumpToScene(3)">04: Alpha Network</div>
+          <div class="scene-pill" onclick="jumpToScene(4)">05: Risk Guard</div>
+          <div class="scene-pill" onclick="jumpToScene(5)">06: Execution</div>
+        </div>
+
+        <div class="controls-right">
+          <button class="btn" id="speedBtn" onclick="cycleSpeed()">1.0x</button>
+          <button class="btn" id="exportBtn" style="border-color: #00ff88; color: #00ff88;">
+            🎥 Download Video
+          </button>
+          <button class="btn" id="fullscreenBtn" title="Fullscreen">⛶</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('videoCanvas');
+    const ctx = canvas.getContext('2d');
+    const timeline = document.getElementById('timeline');
+    const progress = document.getElementById('progress');
+    const scrubberHandle = document.getElementById('scrubberHandle');
+    const playBtn = document.getElementById('playBtn');
+    const playIcon = document.getElementById('playIcon');
+    const playText = document.getElementById('playText');
+    const playOverlay = document.getElementById('playOverlay');
+    const timeDisplay = document.getElementById('timeDisplay');
+    const soundBtn = document.getElementById('soundBtn');
+    const speedBtn = document.getElementById('speedBtn');
+    const exportBtn = document.getElementById('exportBtn');
+    const recBadge = document.getElementById('recBadge');
+    const fullscreenBtn = document.getElementById('fullscreenBtn');
+    const videoBox = document.getElementById('videoBox');
+
+    // Video Specs
+    const WIDTH = 1280;
+    const HEIGHT = 720;
+    const SCENE_DURATION = 6.0; // 6 seconds per scene
+    const NUM_SCENES = 6;
+    const TOTAL_DURATION = SCENE_DURATION * NUM_SCENES; // 36 seconds
+
+    let currentTime = 0;
+    let isPlaying = true;
+    let playbackSpeed = 1.0;
+    let lastTimestamp = performance.now();
+    let isSoundEnabled = true;
+
+    // Web Audio Synthesizer for procedural soundtrack
+    let audioCtx = null;
+    let masterGain = null;
+
+    function initAudio() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        masterGain = audioCtx.createGain();
+        masterGain.gain.setValueAtTime(0.18, audioCtx.currentTime);
+        masterGain.connect(audioCtx.destination);
+      }
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+    }
+
+    function playTone(freq, type = 'sine', duration = 0.15, vol = 0.2) {
+      if (!isSoundEnabled || !audioCtx) return;
+      try {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(masterGain);
+        osc.start();
+        osc.stop(audioCtx.currentTime + duration);
+      } catch(e) {}
+    }
+
+    function playSubDrop() {
+      if (!isSoundEnabled || !audioCtx) return;
+      try {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(140, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(32, audioCtx.currentTime + 0.8);
+        gain.gain.setValueAtTime(0.35, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.8);
+        osc.connect(gain);
+        gain.connect(masterGain);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.8);
+      } catch(e) {}
+    }
+
+    // Colors
+    const CYAN = '#00f0ff';
+    const GREEN = '#00ff88';
+    const GOLD = '#ffc312';
+    const PURPLE = '#b446ff';
+    const RED = '#ff3c5f';
+    const WHITE = '#f8fafc';
+    const MUTED = '#7890a8';
+    const CARD_BG = '#0f1726';
+    const CARD_BORDER = '#1c2c48';
+    const CARD_BG_LIGHT = '#142036';
+
+    const sceneTitles = [
+      "System Boot & Introduction",
+      "Dual-Engine Confluence Matrix",
+      "Symmetrical Trap Shield",
+      "Leader-Follower Alpha Network",
+      "Capital Risk Guard & Compounding",
+      "Execution Proof & Finale"
+    ];
+
+    // Helper: Rounded Rect
+    function roundRect(ctx, x, y, w, h, r, fill, stroke, strokeWidth = 1) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+      if (fill) {
+        ctx.fillStyle = fill;
+        ctx.fill();
+      }
+      if (stroke) {
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = strokeWidth;
+        ctx.stroke();
+      }
+    }
+
+    // Background Grid
+    function drawGrid(t) {
+      ctx.strokeStyle = '#0d1524';
+      ctx.lineWidth = 1;
+      const offset = (t * 20) % 40;
+      for (let x = 0; x < WIDTH; x += 40) {
+        ctx.beginPath();
+        ctx.moveTo(x, 48);
+        ctx.lineTo(x, HEIGHT - 32);
+        ctx.stroke();
+      }
+      for (let y = 48 + offset; y < HEIGHT - 32; y += 40) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(WIDTH, y);
+        ctx.stroke();
+      }
+    }
+
+    // Top HUD
+    function drawHUD(t, sceneIdx) {
+      // Top line
+      ctx.strokeStyle = '#121c30';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, 48);
+      ctx.lineTo(WIDTH, 48);
+      ctx.stroke();
+
+      // Blinking Dot
+      const blink = Math.sin(t * 8) > 0;
+      ctx.fillStyle = blink ? GREEN : '#00aa55';
+      ctx.beginPath();
+      ctx.arc(30, 24, 6, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = WHITE;
+      ctx.font = '13px monospace';
+      ctx.fillText("DELTA EXCHANGE INDIA [LIVE API]", 48, 28);
+
+      const ping = (0.4 + 0.1 * Math.sin(t * 3)).toFixed(1);
+      ctx.fillStyle = MUTED;
+      ctx.fillText(`TELEMETRY: 0ms DIRECT AGG | PING: ${ping}ms | MIN CONFLUENCE: >= 40`, 360, 28);
+
+      const scText = `SCENE 0${sceneIdx + 1}/06: ${sceneTitles[sceneIdx].toUpperCase()}`;
+      ctx.fillStyle = CYAN;
+      ctx.textAlign = 'right';
+      ctx.fillText(scText, WIDTH - 30, 28);
+      ctx.textAlign = 'left';
+    }
+
+    // Scene 1: Boot & Intro
+    function renderScene1(t) {
+      const cx = WIDTH / 2;
+      const cy = HEIGHT / 2;
+      const anim = Math.min(1.0, t / 1.0);
+
+      // Radar rings
+      ctx.save();
+      for (let [r, speed] of [[180, 0.4], [250, -0.3], [320, 0.2]]) {
+        ctx.strokeStyle = 'rgba(28, 44, 72, 0.5)';
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.stroke();
+
+        for (let deg = 0; deg < 360; deg += 45) {
+          const rad = (deg + t * speed * 60) * Math.PI / 180;
+          ctx.beginPath();
+          ctx.moveTo(cx + Math.cos(rad) * (r - 10), cy + Math.sin(rad) * (r - 10));
+          ctx.lineTo(cx + Math.cos(rad) * r, cy + Math.sin(rad) * r);
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+
+      // Rotating Hexagon
+      ctx.save();
+      ctx.translate(cx, cy - 60);
+      ctx.rotate(t * 0.4);
+      ctx.strokeStyle = CYAN;
+      ctx.lineWidth = 2;
+      ctx.shadowColor = CYAN;
+      ctx.shadowBlur = 15;
+      ctx.beginPath();
+      for (let i = 0; i < 6; i++) {
+        const a = (i * 60) * Math.PI / 180;
+        const x = Math.cos(a) * 55;
+        const y = Math.sin(a) * 55;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.stroke();
+      ctx.restore();
+
+      // Badges & Titles
+      roundRect(ctx, cx - 160, cy - 145, 320, 28, 6, CARD_BG, CYAN, 1);
+      ctx.fillStyle = CYAN;
+      ctx.font = 'bold 12px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText("INSTITUTIONAL HIGH-FREQUENCY ENGINE", cx, cy - 126);
+
+      ctx.fillStyle = WHITE;
+      ctx.font = 'bold 44px sans-serif';
+      ctx.shadowColor = 'rgba(0, 240, 255, 0.4)';
+      ctx.shadowBlur = 20;
+      ctx.fillText("DELTA CRYPTOBOT", cx, cy - 85);
+      ctx.shadowBlur = 0;
+
+      ctx.fillStyle = GOLD;
+      ctx.font = 'bold 22px sans-serif';
+      ctx.fillText("DUAL-ENGINE CONFLUENCE ARCHITECTURE", cx, cy - 40);
+
+      ctx.fillStyle = MUTED;
+      ctx.font = '15px sans-serif';
+      ctx.fillText("Mathematical DSP Physics + Symmetrical Trap Shield + Automated Risk Guard", cx, cy - 10);
+      ctx.textAlign = 'left';
+
+      // Feature Cards Row
+      const badges = [
+        ["0ms WEBSOCKET", GREEN],
+        ["DUAL CONFLUENCE", CYAN],
+        ["TRAP SHIELD", PURPLE],
+        ["ZERO INVERSION", GOLD],
+        ["HARD RISK (20x)", RED]
+      ];
+      const startX = cx - (badges.length * 220 - 20) / 2;
+      badges.forEach(([name, col], i) => {
+        const bx = startX + i * 220;
+        const by = cy + 50 + (1 - anim) * 30;
+        roundRect(ctx, bx, by, 200, 50, 8, CARD_BG, col, 1);
+        ctx.fillStyle = col;
+        ctx.beginPath();
+        ctx.arc(bx + 20, by + 25, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = WHITE;
+        ctx.font = 'bold 12px monospace';
+        ctx.fillText(name, bx + 35, by + 29);
+      });
+
+      // Target pairs
+      ctx.fillStyle = CYAN;
+      ctx.font = '13px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText("Target Watchlist: XRPUSD (Supreme Leader) | SOLUSD | DOGEUSD | AVAXUSD | SUIUSD", cx, cy + 160);
+      ctx.textAlign = 'left';
+    }
+
+    // Scene 2: Dual Engine
+    function renderScene2(t) {
+      ctx.fillStyle = WHITE;
+      ctx.font = 'bold 26px sans-serif';
+      ctx.fillText("CORE ARCHITECTURE: DUAL-ENGINE CONFLUENCE MATRIX", 60, 90);
+      ctx.fillStyle = MUTED;
+      ctx.font = '15px sans-serif';
+      ctx.fillText("Two independent quantitative algorithms must mathematically agree before ANY order is dispatched.", 60, 118);
+
+      const cardY = 150;
+      const w = 480;
+      const h = 450;
+
+      // Engine 1 Card
+      roundRect(ctx, 60, cardY, w, h, 12, CARD_BG, CYAN, 2);
+      roundRect(ctx, 80, cardY + 20, 200, 28, 6, CARD_BG_LIGHT, CYAN, 1);
+      ctx.fillStyle = CYAN;
+      ctx.font = 'bold 12px monospace';
+      ctx.fillText("ENGINE 1: TECHNICALS", 95, cardY + 38);
+      ctx.fillStyle = WHITE;
+      ctx.font = 'bold 20px sans-serif';
+      ctx.fillText("Institutional Indicator Engine", 80, cardY + 75);
+
+      // Mini chart
+      const chartX = 80, chartY = cardY + 95, chartW = 440, chartH = 175;
+      roundRect(ctx, chartX, chartY, chartW, chartH, 8, '#0b111c', CARD_BORDER, 1);
+
+      // Simulated candles
+      const candles = [
+        [100, 95, 115, 110], [110, 108, 125, 122], [122, 118, 130, 120],
+        [120, 115, 135, 132], [132, 128, 142, 138], [138, 135, 150, 148],
+        [148, 142, 155, 145], [145, 140, 160, 158], [158, 152, 168, 165]
+      ];
+      const step = chartW / (candles.length + 1);
+      candles.forEach(([o, l, hp, c], i) => {
+        const cxCandle = chartX + 25 + i * step;
+        const yo = chartY + chartH - (o - 80) * 1.5;
+        const yc = chartY + chartH - (c - 80) * 1.5;
+        const yl = chartY + chartH - (l - 80) * 1.5;
+        const yh = chartY + chartH - (hp - 80) * 1.5;
+        const col = c >= o ? GREEN : RED;
+
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(cxCandle, yl);
+        ctx.lineTo(cxCandle, yh);
+        ctx.stroke();
+
+        ctx.fillStyle = col;
+        ctx.fillRect(cxCandle - 6, Math.min(yo, yc), 12, Math.abs(yc - yo) || 2);
+      });
+
+      // Animated EMA line
+      ctx.strokeStyle = GOLD;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let s = 0; s < chartW; s += 4) {
+        const val = chartY + chartH - 60 - Math.sin((s + t * 40) * 0.03) * 25 - s * 0.15;
+        if (s === 0) ctx.moveTo(chartX + s, val);
+        else ctx.lineTo(chartX + s, val);
+      }
+      ctx.stroke();
+
+      ctx.fillStyle = WHITE;
+      ctx.font = '14px sans-serif';
+      ctx.fillText("• Triple Exponential Ribbon (EMA 9, 21, 50, 100, 200)", 80, cardY + 300);
+      ctx.fillText("• Dynamic Momentum Curves (RSI-14 Divergence)", 80, cardY + 330);
+      ctx.fillText("• Zero-Lag Exponential Moving Average (ZLEMA-21)", 80, cardY + 360);
+      ctx.fillText("• Bollinger Band Mean-Reversion Floor Reclaims", 80, cardY + 390);
+
+      // Engine 2 Card
+      const rx = WIDTH - 60 - w;
+      roundRect(ctx, rx, cardY, w, h, 12, CARD_BG, PURPLE, 2);
+      roundRect(ctx, rx + 20, cardY + 20, 200, 28, 6, CARD_BG_LIGHT, PURPLE, 1);
+      ctx.fillStyle = PURPLE;
+      ctx.font = 'bold 12px monospace';
+      ctx.fillText("ENGINE 2: QUANT DSP", rx + 35, cardY + 38);
+      ctx.fillStyle = WHITE;
+      ctx.font = 'bold 20px sans-serif';
+      ctx.fillText("Mathematical Physics Engine", rx + 20, cardY + 75);
+
+      // DSP Box
+      roundRect(ctx, rx + 20, chartY, chartW, chartH, 8, '#0b111c', CARD_BORDER, 1);
+
+      // Animated Sine waves
+      ctx.strokeStyle = CYAN;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let s = 0; s < chartW; s += 4) {
+        const phase = s * 0.04 + t * 4;
+        const val = chartY + 90 + Math.sin(phase) * 35 + Math.cos(phase * 0.5) * 15;
+        if (s === 0) ctx.moveTo(rx + 20 + s, val);
+        else ctx.lineTo(rx + 20 + s, val);
+      }
+      ctx.stroke();
+
+      ctx.strokeStyle = PURPLE;
+      ctx.beginPath();
+      for (let s = 0; s < chartW; s += 4) {
+        const phase = s * 0.04 + t * 4 + 1.2;
+        const val = chartY + 90 + Math.sin(phase) * 28;
+        if (s === 0) ctx.moveTo(rx + 20 + s, val);
+        else ctx.lineTo(rx + 20 + s, val);
+      }
+      ctx.stroke();
+
+      ctx.fillStyle = WHITE;
+      ctx.font = '14px sans-serif';
+      ctx.fillText("• Ehlers SuperSmoother 2-Pole Filter", rx + 20, cardY + 300);
+      ctx.fillText("• Hurst Exponent Persistence (H = 0.68)", rx + 20, cardY + 330);
+      ctx.fillText("• Fisher Transform Wave Velocity", rx + 20, cardY + 360);
+      ctx.fillText("• Kalman Filter Hidden State Estimation", rx + 20, cardY + 390);
+
+      // Center Confluence Meter
+      const midX = WIDTH / 2;
+      const midY = cardY + h / 2;
+
+      // Connecting energy beam
+      ctx.strokeStyle = '#253d60';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(60 + w, midY);
+      ctx.lineTo(rx, midY);
+      ctx.stroke();
+
+      const pulseX = (60 + w) + ((t * 150) % (rx - (60 + w)));
+      ctx.fillStyle = GOLD;
+      ctx.shadowColor = GOLD;
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.arc(pulseX, midY, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // Central Meter
+      roundRect(ctx, midX - 80, midY - 80, 160, 160, 16, CARD_BG_LIGHT, GOLD, 3);
+      ctx.fillStyle = GOLD;
+      ctx.font = 'bold 12px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText("CONFLUENCE", midX, midY - 55);
+
+      const score = Math.min(88.5, 42.0 + t * 9.5).toFixed(1);
+      ctx.fillStyle = GREEN;
+      ctx.font = 'bold 38px sans-serif';
+      ctx.fillText(score, midX, midY - 5);
+
+      ctx.fillStyle = MUTED;
+      ctx.font = '12px sans-serif';
+      ctx.fillText("MIN PASS: >= 40", midX, midY + 25);
+
+      ctx.fillStyle = GREEN;
+      ctx.font = 'bold 13px monospace';
+      ctx.fillText("[STRONG BUY]", midX, midY + 50);
+      ctx.textAlign = 'left';
+    }
+
+    // Scene 3: Trap Shield
+    function renderScene3(t) {
+      ctx.fillStyle = WHITE;
+      ctx.font = 'bold 26px sans-serif';
+      ctx.fillText("DEFENSE SYSTEM: SYMMETRICAL TRAP & REVERSAL SHIELD", 60, 90);
+      ctx.fillStyle = MUTED;
+      ctx.font = '15px sans-serif';
+      ctx.fillText("Protects capital by filtering false breakouts, stop-hunts, and identifying counter-trend absorption floors.", 60, 118);
+
+      const cx = 60, cy = 150, cw = 740, ch = 450;
+      roundRect(ctx, cx, cy, cw, ch, 12, CARD_BG, CARD_BORDER, 2);
+
+      ctx.fillStyle = WHITE;
+      ctx.font = 'bold 18px sans-serif';
+      ctx.fillText("SOLUSD 15M - LIQUIDITY SWEEP & ABSORPTION WICK", cx + 25, cy + 30);
+      ctx.fillStyle = GREEN;
+      ctx.font = 'bold 13px monospace';
+      ctx.fillText("STATUS: TRAP NEUTRALIZED", cx + 520, cy + 30);
+
+      // Support Level Line
+      const supY = cy + 280;
+      ctx.strokeStyle = '#28466e';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(cx + 20, supY);
+      ctx.lineTo(cx + cw - 20, supY);
+      ctx.stroke();
+
+      ctx.fillStyle = CYAN;
+      ctx.font = '12px monospace';
+      ctx.fillText("MAJOR KEY SUPPORT ZONE ($184.50)", cx + 30, supY - 12);
+
+      // False breakdown candles
+      const trapCandles = [
+        [60, 220, 210, 240, 235, RED],
+        [130, 235, 230, 260, 255, RED],
+        [200, 255, 250, 280, 275, RED],
+        [270, 275, 270, 360, 290, RED], // False breakdown
+        [340, 290, 265, 300, 265, GREEN], // Absorption
+        [410, 265, 240, 270, 240, GREEN],
+        [480, 240, 210, 245, 215, GREEN],
+        [550, 215, 185, 220, 190, GREEN],
+        [620, 190, 160, 195, 165, GREEN],
+      ];
+
+      trapCandles.forEach(([ox, o, hp, l, c, col]) => {
+        const canX = cx + ox;
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(canX, cy + hp);
+        ctx.lineTo(canX, cy + l);
+        ctx.stroke();
+
+        ctx.fillStyle = col;
+        ctx.fillRect(canX - 10, Math.min(cy + o, cy + c), 20, Math.abs(c - o) || 2);
+      });
+
+      // Highlight Trap
+      const wickX = cx + 270;
+      const wickY = cy + 320;
+      ctx.strokeStyle = RED;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(wickX - 25, wickY - 20, 50, 60);
+
+      ctx.fillStyle = RED;
+      ctx.font = 'bold 12px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText("FALSE BREAKDOWN STOP-HUNT", wickX, wickY + 60);
+
+      // Green shield
+      const shieldX = cx + 340;
+      const shieldY = cy + 250;
+      ctx.fillStyle = '#005032';
+      ctx.beginPath();
+      ctx.arc(shieldX, shieldY, 20, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = GREEN;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = WHITE;
+      ctx.font = 'bold 12px monospace';
+      ctx.fillText("OK", shieldX, shieldY + 4);
+      ctx.fillStyle = GREEN;
+      ctx.fillText("REVERSAL RECLAIM", shieldX, shieldY - 30);
+      ctx.textAlign = 'left';
+
+      // Right Features Panel
+      const rx = cx + cw + 30;
+      const rw = WIDTH - rx - 60;
+      roundRect(ctx, rx, cy, rw, ch, 12, CARD_BG, CYAN, 2);
+
+      ctx.fillStyle = CYAN;
+      ctx.font = 'bold 18px sans-serif';
+      ctx.fillText("TRAP SHIELD MECHANICS", rx + 25, cy + 35);
+
+      const feats = [
+        ["Wick Absorption Scoring", "Identifies institutional limit orders absorbing panic sales (>0.8 ATR wick).", GREEN],
+        ["Symmetric Evaluation", "Capitulation floors and blow-off tops analyzed with equal mathematical rigor.", GOLD],
+        ["Zero Signal Inversion", "BUY signals strictly dispatch BUY orders. 100% directional fidelity guaranteed.", CYAN],
+        ["Anti-Chop Filter", "Choppiness Index pauses trading in low-conviction range chop.", PURPLE]
+      ];
+
+      let fy = cy + 70;
+      feats.forEach(([title, desc, col]) => {
+        roundRect(ctx, rx + 20, fy, rw - 40, 75, 8, CARD_BG_LIGHT, CARD_BORDER, 1);
+        ctx.fillStyle = col;
+        ctx.beginPath();
+        ctx.arc(rx + 35, fy + 22, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = WHITE;
+        ctx.font = 'bold 13px monospace';
+        ctx.fillText(title, rx + 50, fy + 26);
+        ctx.fillStyle = MUTED;
+        ctx.font = '12px sans-serif';
+        ctx.fillText(desc.substring(0, 42), rx + 30, fy + 48);
+        ctx.fillText(desc.substring(42), rx + 30, fy + 64);
+        fy += 90;
+      });
+    }
+
+    // Scene 4: Leader-Follower
+    function renderScene4(t) {
+      ctx.fillStyle = WHITE;
+      ctx.font = 'bold 26px sans-serif';
+      ctx.fillText("ALPHA NETWORK: LEADER-FOLLOWER HIERARCHY", 60, 90);
+      ctx.fillStyle = MUTED;
+      ctx.font = '15px sans-serif';
+      ctx.fillText("High-conviction market leaders transmit directional momentum to correlated followers with zero lag.", 60, 118);
+
+      const cardY = 150;
+      const wCard = 350;
+
+      // Leader 1: XRPUSD
+      const lx1 = 120, ly1 = cardY + 30;
+      roundRect(ctx, lx1, ly1, wCard, 160, 12, CARD_BG, CYAN, 2);
+      ctx.fillStyle = WHITE;
+      ctx.font = 'bold 36px sans-serif';
+      ctx.fillText("XRPUSD", lx1 + 20, ly1 + 50);
+      ctx.fillStyle = CYAN;
+      ctx.font = 'bold 12px monospace';
+      ctx.fillText("SUPREME LEADER", lx1 + 200, ly1 + 35);
+      ctx.fillStyle = GREEN;
+      ctx.font = 'bold 18px sans-serif';
+      ctx.fillText("WIN RATE: 83.3%", lx1 + 20, ly1 + 95);
+      ctx.fillStyle = MUTED;
+      ctx.font = '14px sans-serif';
+      ctx.fillText("Highest conviction setups | Directional King", lx1 + 20, ly1 + 130);
+
+      // Follower 1: SOLUSD
+      const fx1 = WIDTH - 120 - wCard, fy1 = ly1;
+      roundRect(ctx, fx1, fy1, wCard, 160, 12, CARD_BG, CARD_BORDER, 1);
+      ctx.fillStyle = WHITE;
+      ctx.font = 'bold 36px sans-serif';
+      ctx.fillText("SOLUSD", fx1 + 20, fy1 + 50);
+      ctx.fillStyle = MUTED;
+      ctx.font = 'bold 12px monospace';
+      ctx.fillText("CORRELATED FOLLOWER", fx1 + 170, fy1 + 35);
+      ctx.fillStyle = CYAN;
+      ctx.font = 'bold 18px sans-serif';
+      ctx.fillText("COPIES XRP DIRECTION", fx1 + 20, fy1 + 95);
+      ctx.fillStyle = MUTED;
+      ctx.font = '14px sans-serif';
+      ctx.fillText("Amplifies alpha on correlated high-beta moves", fx1 + 20, fy1 + 130);
+
+      // Connector 1
+      const arrY1 = ly1 + 80;
+      ctx.strokeStyle = CARD_BORDER;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(lx1 + wCard, arrY1);
+      ctx.lineTo(fx1, arrY1);
+      ctx.stroke();
+
+      const p1 = (lx1 + wCard) + ((t * 220) % (fx1 - (lx1 + wCard)));
+      ctx.fillStyle = CYAN;
+      ctx.shadowColor = CYAN;
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.arc(p1, arrY1, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // Leader 2: DOGEUSD
+      const ly2 = cardY + 230;
+      roundRect(ctx, lx1, ly2, wCard, 160, 12, CARD_BG, GOLD, 2);
+      ctx.fillStyle = WHITE;
+      ctx.font = 'bold 36px sans-serif';
+      ctx.fillText("DOGEUSD", lx1 + 20, ly2 + 50);
+      ctx.fillStyle = GOLD;
+      ctx.font = 'bold 12px monospace';
+      ctx.fillText("MEME LEADER", lx1 + 210, ly2 + 35);
+      ctx.fillStyle = GREEN;
+      ctx.font = 'bold 18px sans-serif';
+      ctx.fillText("WIN RATE: 73.3%", lx1 + 20, ly2 + 95);
+      ctx.fillStyle = MUTED;
+      ctx.font = '14px sans-serif';
+      ctx.fillText("Momentum breakouts & liquidity explosions", lx1 + 20, ly2 + 130);
+
+      // Follower 2: AVAXUSD
+      const fy2 = ly2;
+      roundRect(ctx, fx1, fy2, wCard, 160, 12, CARD_BG, CARD_BORDER, 1);
+      ctx.fillStyle = WHITE;
+      ctx.font = 'bold 36px sans-serif';
+      ctx.fillText("AVAXUSD", fx1 + 20, fy2 + 50);
+      ctx.fillStyle = MUTED;
+      ctx.font = 'bold 12px monospace';
+      ctx.fillText("VOLATILE FOLLOWER", fx1 + 180, fy2 + 35);
+      ctx.fillStyle = GOLD;
+      ctx.font = 'bold 18px sans-serif';
+      ctx.fillText("COPIES DOGE DIRECTION", fx1 + 20, fy2 + 95);
+      ctx.fillStyle = MUTED;
+      ctx.font = '14px sans-serif';
+      ctx.fillText("Mirrors meme momentum with institutional filter", fx1 + 20, fy2 + 130);
+
+      // Connector 2
+      const arrY2 = ly2 + 80;
+      ctx.strokeStyle = CARD_BORDER;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(lx1 + wCard, arrY2);
+      ctx.lineTo(fx1, arrY2);
+      ctx.stroke();
+
+      const p2 = (lx1 + wCard) + ((t * 200) % (fx1 - (lx1 + wCard)));
+      ctx.fillStyle = GOLD;
+      ctx.shadowColor = GOLD;
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.arc(p2, arrY2, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // Bottom Center: SUIUSD
+      const sx = WIDTH / 2 - 180;
+      const sy = cardY + 410;
+      roundRect(ctx, sx, sy, 360, 50, 8, CARD_BG_LIGHT, PURPLE, 1);
+      ctx.fillStyle = WHITE;
+      ctx.font = 'bold 13px monospace';
+      ctx.fillText("SUIUSD: INDEPENDENT VOLATILITY (70.0% WR)", sx + 25, sy + 30);
+    }
+
+    // Scene 5: Risk Guard & Compounding
+    function renderScene5(t) {
+      ctx.fillStyle = WHITE;
+      ctx.font = 'bold 26px sans-serif';
+      ctx.fillText("CAPITAL PRESERVATION: CENTRALIZED RISK GUARD", 60, 90);
+      ctx.fillStyle = MUTED;
+      ctx.font = '15px sans-serif';
+      ctx.fillText("Mathematical risk sizing guarantees survival. Asymmetrical 1:2.4 Risk:Reward compounds equity safely.", 60, 118);
+
+      const cardY = 150;
+      const lw = 520, lh = 450;
+      roundRect(ctx, 60, cardY, lw, lh, 12, CARD_BG, RED, 2);
+
+      ctx.fillStyle = RED;
+      ctx.font = 'bold 18px sans-serif';
+      ctx.fillText("STARTUP-VALIDATED RISK GUARD", 85, cardY + 35);
+      ctx.fillStyle = MUTED;
+      ctx.font = '12px monospace';
+      ctx.fillText("config/riskConfig.json (Enforced at boot)", 85, cardY + 58);
+
+      const rules = [
+        ["MAX LEVERAGE CEILING", "20x HARD LIMIT", "Refuses bot launch if leverage > 20x.", RED],
+        ["FIXED LOSS PER TRADE", "$2.50 USD", "Contract quantity sized so stop loss = $2.50.", GOLD],
+        ["TARGET PROFIT PER TRADE", "$6.00 USD", "Guaranteed 1:2.4 R:R target profit on every setup.", GREEN],
+        ["MINIMUM STOP DISTANCE", ">= 0.8 ATR", "Prevents tight noise stopouts from market wicks.", CYAN],
+        ["CONCURRENCY LIMIT", "1 POSITION ONLY", "Strictly 1 active position for capital safety.", PURPLE],
+        ["EMERGENCY SURVIVAL FLOOR", "Rs 500 INR", "Trading pauses immediately if equity touches Rs 500.", WHITE],
+      ];
+
+      let ry = cardY + 85;
+      rules.forEach(([name, val, desc, col]) => {
+        roundRect(ctx, 85, ry, lw - 50, 50, 6, CARD_BG_LIGHT, CARD_BORDER, 1);
+        ctx.fillStyle = WHITE;
+        ctx.font = 'bold 12px monospace';
+        ctx.fillText(name, 100, ry + 20);
+        ctx.fillStyle = col;
+        ctx.textAlign = 'right';
+        ctx.fillText(val, 85 + lw - 70, ry + 20);
+        ctx.textAlign = 'left';
+        ctx.fillStyle = MUTED;
+        ctx.font = '12px sans-serif';
+        ctx.fillText(desc, 100, ry + 38);
+        ry += 58;
+      });
+
+      // Right: Compounding Curve
+      const rx = 60 + lw + 30;
+      const rw = WIDTH - rx - 60;
+      roundRect(ctx, rx, cardY, rw, lh, 12, CARD_BG, GREEN, 2);
+
+      ctx.fillStyle = GREEN;
+      ctx.font = 'bold 18px sans-serif';
+      ctx.fillText("EQUITY COMPOUNDING TRAJECTORY", rx + 25, cardY + 35);
+      ctx.fillStyle = MUTED;
+      ctx.font = '12px monospace';
+      ctx.fillText("From Starting Capital to Profit Goal", rx + 25, cardY + 58);
+
+      const gx = rx + 30, gy = cardY + 95, gw = rw - 60, gh = 240;
+      roundRect(ctx, gx, gy, gw, gh, 8, '#0b111c', CARD_BORDER, 1);
+
+      // Milestones
+      const y2k = gy + gh - 40;
+      const y4k = gy + gh - 120;
+      const y8k = gy + 40;
+
+      ctx.strokeStyle = '#19283c';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(gx, y2k); ctx.lineTo(gx + gw, y2k);
+      ctx.moveTo(gx, y4k); ctx.lineTo(gx + gw, y4k);
+      ctx.moveTo(gx, y8k); ctx.lineTo(gx + gw, y8k);
+      ctx.stroke();
+
+      ctx.fillStyle = MUTED;
+      ctx.font = '12px monospace';
+      ctx.fillText("Rs 2,000 INR (STARTING BASE)", gx + 10, y2k - 10);
+      ctx.fillStyle = GOLD;
+      ctx.fillText("Rs 4,000 INR (INITIAL PROFIT GOAL)", gx + 10, y4k - 10);
+      ctx.fillStyle = GREEN;
+      ctx.fillText("Rs 8,000 INR+ (COMPOUND EXPANSION)", gx + 10, y8k - 10);
+
+      // Curve
+      const animProgress = Math.min(1.0, t / 4.0);
+      const maxPts = Math.floor(gw * animProgress);
+
+      ctx.strokeStyle = GREEN;
+      ctx.lineWidth = 3;
+      ctx.shadowColor = GREEN;
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      let lastX = gx, lastY = y2k;
+      for (let p = 0; p < maxPts; p++) {
+        const norm = p / gw;
+        const valY = y2k - Math.pow(norm, 1.6) * (y2k - y8k);
+        if (p === 0) ctx.moveTo(gx + p, valY);
+        else ctx.lineTo(gx + p, valY);
+        lastX = gx + p;
+        lastY = valY;
+      }
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      if (maxPts > 0) {
+        ctx.fillStyle = WHITE;
+        ctx.beginPath();
+        ctx.arc(lastX, lastY, 6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      const currInr = Math.floor(2000 + Math.pow(animProgress, 1.6) * 6000);
+      ctx.fillStyle = WHITE;
+      ctx.font = 'bold 24px sans-serif';
+      ctx.fillText(`PROJECTED BALANCE: Rs ${currInr.toLocaleString()} INR`, rx + 30, cardY + 375);
+      ctx.fillStyle = CYAN;
+      ctx.font = '12px monospace';
+      ctx.fillText("STATUS: 100% AUTOMATED EXECUTION | 0 MANUAL INTERVENTION", rx + 30, cardY + 410);
+    }
+
+    // Scene 6: Execution & Finale
+    function renderScene6(t) {
+      ctx.fillStyle = WHITE;
+      ctx.font = 'bold 26px sans-serif';
+      ctx.fillText("LIVE EXECUTION: HIGH-FIDELITY AUTOMATED GATEWAY", 60, 90);
+      ctx.fillStyle = MUTED;
+      ctx.font = '15px sans-serif';
+      ctx.fillText("Zero signal inversion. Automated server-side bracket order protection (Take-Profit & Stop-Loss).", 60, 118);
+
+      const cardY = 150;
+      const lw = 620, lh = 450;
+      roundRect(ctx, 60, cardY, lw, lh, 12, CARD_BG, CYAN, 2);
+
+      ctx.fillStyle = CYAN;
+      ctx.font = 'bold 18px sans-serif';
+      ctx.fillText("ORDER EXECUTION TERMINAL", 85, cardY + 35);
+      ctx.fillStyle = MUTED;
+      ctx.font = '12px monospace';
+      ctx.fillText("POST /v2/orders | HMAC-SHA256 Signed Gateway", 85, cardY + 58);
+
+      const logs = [
+        ["[00.1ms]", "SCANNER: Confluence Score evaluated across 5 coins", MUTED],
+        ["[00.4ms]", "SIGNAL: XRPUSD Long Triggered (Score: 88.5 / 100)", CYAN],
+        ["[00.7ms]", "RISK GUARD: Sizing calculated -> 150 Contracts, 20x Lev", GOLD],
+        ["[01.1ms]", "ASSERTION: Strict orderSide === signal.side [VERIFIED]", GREEN],
+        ["[01.4ms]", "DISPATCH: Limit Order placed at $2.1450 [FILLED]", WHITE],
+        ["[01.8ms]", "BRACKET: Server-side TP ($2.1860) & SL ($2.1280) Active", PURPLE],
+        ["[04.2s]",  "MARKET SURGE: Price touches $2.1860 Take-Profit", CYAN],
+        ["[04.5s]",  "EXECUTION: Take-Profit Triggered! Bracket closed.", GREEN],
+      ];
+
+      let ly = cardY + 95;
+      logs.forEach(([ts, text, col]) => {
+        ctx.fillStyle = MUTED;
+        ctx.font = '13px monospace';
+        ctx.fillText(ts, 85, ly);
+        ctx.fillStyle = col;
+        ctx.fillText(text, 175, ly);
+        ly += 36;
+      });
+
+      // Right Card
+      const rx = 60 + lw + 30;
+      const rw = WIDTH - rx - 60;
+      roundRect(ctx, rx, cardY, rw, lh, 12, CARD_BG, GREEN, 2);
+
+      // Profit Card
+      roundRect(ctx, rx + 25, cardY + 25, rw - 50, 145, 10, CARD_BG_LIGHT, GREEN, 2);
+      ctx.fillStyle = MUTED;
+      ctx.font = '12px monospace';
+      ctx.fillText("TRADE RESULT", rx + 45, cardY + 50);
+      ctx.fillStyle = GREEN;
+      ctx.font = 'bold 44px sans-serif';
+      ctx.shadowColor = GREEN;
+      ctx.shadowBlur = 15;
+      ctx.fillText("+$6.00 USD", rx + 45, cardY + 100);
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = WHITE;
+      ctx.font = 'bold 16px sans-serif';
+      ctx.fillText("+24.5% NET RETURN ON MARGIN", rx + 45, cardY + 135);
+
+      ctx.fillStyle = GOLD;
+      ctx.font = 'bold 18px sans-serif';
+      ctx.fillText("SYSTEM READY FOR DEPLOYMENT", rx + 25, cardY + 205);
+
+      ctx.fillStyle = WHITE;
+      ctx.font = '14px sans-serif';
+      ctx.fillText("• Dual-Engine Mathematical Precision", rx + 25, cardY + 240);
+      ctx.fillText("• Symmetrical Trap Shield Protection", rx + 25, cardY + 270);
+      ctx.fillText("• Strict Centralized Risk Guard", rx + 25, cardY + 300);
+      ctx.fillText("• Tested across 32 Verification Assertions", rx + 25, cardY + 330);
+
+      // Button
+      roundRect(ctx, rx + 25, cardY + 370, rw - 50, 50, 8, GREEN, WHITE, 1);
+      ctx.fillStyle = '#06130a';
+      ctx.font = 'bold 16px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText("START QUANT ENGINE (npm run dev)", rx + rw / 2, cardY + 402);
+      ctx.textAlign = 'left';
+    }
+
+    // Main Render Loop
+    let lastSceneIdx = -1;
+
+    function render(now) {
+      const dt = (now - lastTimestamp) / 1000;
+      lastTimestamp = now;
+
+      if (isPlaying) {
+        currentTime += dt * playbackSpeed;
+        if (currentTime >= TOTAL_DURATION) {
+          currentTime = 0; // Loop or stay at end
+        }
+      }
+
+      // Clear Canvas
+      ctx.fillStyle = '#090e18';
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+      // Draw Grid
+      drawGrid(currentTime);
+
+      const sceneIdx = Math.min(NUM_SCENES - 1, Math.floor(currentTime / SCENE_DURATION));
+      const localT = currentTime - (sceneIdx * SCENE_DURATION);
+
+      // Play sound on scene change
+      if (sceneIdx !== lastSceneIdx) {
+        if (lastSceneIdx !== -1) {
+          playSubDrop();
+          playTone(660, 'triangle', 0.2, 0.15);
+        }
+        lastSceneIdx = sceneIdx;
+        updateScenePills(sceneIdx);
+      }
+
+      // Render Scene
+      if (sceneIdx === 0) renderScene1(localT);
+      else if (sceneIdx === 1) renderScene2(localT);
+      else if (sceneIdx === 2) renderScene3(localT);
+      else if (sceneIdx === 3) renderScene4(localT);
+      else if (sceneIdx === 4) renderScene5(localT);
+      else if (sceneIdx === 5) renderScene6(localT);
+
+      // Persistent HUD
+      drawHUD(currentTime, sceneIdx);
+
+      // Update UI Progress
+      const pct = (currentTime / TOTAL_DURATION) * 100;
+      progress.style.width = pct + '%';
+      scrubberHandle.style.left = pct + '%';
+
+      const curSec = Math.floor(currentTime);
+      const totSec = Math.floor(TOTAL_DURATION);
+      timeDisplay.textContent = `${String(Math.floor(curSec/60)).padStart(2,'0')}:${String(curSec%60).padStart(2,'0')} / ${String(Math.floor(totSec/60)).padStart(2,'0')}:${String(totSec%60).padStart(2,'0')}`;
+
+      requestAnimationFrame(render);
+    }
+
+    // Setup timeline scene markers
+    function setupMarkers() {
+      for (let i = 1; i < NUM_SCENES; i++) {
+        const marker = document.createElement('div');
+        marker.className = 'scene-marker';
+        marker.style.left = ((i / NUM_SCENES) * 100) + '%';
+        timeline.appendChild(marker);
+      }
+    }
+    setupMarkers();
+
+    function updateScenePills(activeIdx) {
+      const pills = document.querySelectorAll('.scene-pill');
+      pills.forEach((p, idx) => {
+        if (idx === activeIdx) p.classList.add('active');
+        else p.classList.remove('active');
+      });
+    }
+
+    function jumpToScene(idx) {
+      initAudio();
+      currentTime = idx * SCENE_DURATION;
+      updateScenePills(idx);
+      playSubDrop();
+    }
+
+    // Timeline Click/Drag
+    let isDragging = false;
+    timeline.addEventListener('mousedown', (e) => {
+      isDragging = true;
+      handleSeek(e);
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (isDragging) handleSeek(e);
+    });
+    window.addEventListener('mouseup', () => {
+      isDragging = false;
+    });
+
+    function handleSeek(e) {
+      initAudio();
+      const rect = timeline.getBoundingClientRect();
+      const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      currentTime = pos * TOTAL_DURATION;
+    }
+
+    // Controls
+    function togglePlay() {
+      initAudio();
+      isPlaying = !isPlaying;
+      if (isPlaying) {
+        playIcon.textContent = '⏸';
+        playText.textContent = 'Pause';
+        playOverlay.classList.remove('show');
+      } else {
+        playIcon.textContent = '▶';
+        playText.textContent = 'Play';
+        playOverlay.classList.add('show');
+      }
+    }
+
+    playBtn.addEventListener('click', togglePlay);
+    playOverlay.addEventListener('click', togglePlay);
+    canvas.addEventListener('click', togglePlay);
+
+    document.getElementById('restartBtn').addEventListener('click', () => {
+      initAudio();
+      currentTime = 0;
+      isPlaying = true;
+      playIcon.textContent = '⏸';
+      playText.textContent = 'Pause';
+      playOverlay.classList.remove('show');
+      playSubDrop();
+    });
+
+    soundBtn.addEventListener('click', () => {
+      initAudio();
+      isSoundEnabled = !isSoundEnabled;
+      soundBtn.textContent = isSoundEnabled ? '🔊 Audio Synth: ON' : '🔇 Audio: MUTED';
+      soundBtn.classList.toggle('active', isSoundEnabled);
+    });
+
+    function cycleSpeed() {
+      const speeds = [0.5, 1.0, 1.5, 2.0];
+      const nextIdx = (speeds.indexOf(playbackSpeed) + 1) % speeds.length;
+      playbackSpeed = speeds[nextIdx];
+      speedBtn.textContent = playbackSpeed + 'x';
+    }
+
+    fullscreenBtn.addEventListener('click', () => {
+      if (!document.fullscreenElement) {
+        videoBox.requestFullscreen().catch(err => {});
+      } else {
+        document.exitFullscreen();
+      }
+    });
+
+    // Spacebar to pause/play
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Space') {
+        e.preventDefault();
+        togglePlay();
+      }
+    });
+
+    // Video Exporter (Records Canvas directly to WebM/MP4 video file!)
+    let mediaRecorder = null;
+    let recordedChunks = [];
+
+    exportBtn.addEventListener('click', () => {
+      initAudio();
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+        return;
+      }
+
+      exportBtn.textContent = '⏹ Stop & Save';
+      recBadge.classList.add('recording');
+      currentTime = 0;
+      isPlaying = true;
+      playbackSpeed = 1.0;
+      recordedChunks = [];
+
+      // Capture Canvas 60 FPS Stream
+      const stream = canvas.captureStream(60);
+
+      // Capture Audio if available
+      if (audioCtx && masterGain) {
+        const dest = audioCtx.createMediaStreamDestination();
+        masterGain.connect(dest);
+        dest.stream.getAudioTracks().forEach(track => stream.addTrack(track));
+      }
+
+      const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+        ? 'video/webm;codecs=vp9'
+        : 'video/webm';
+
+      mediaRecorder = new MediaRecorder(stream, { mimeType });
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) recordedChunks.push(e.data);
+      };
+
+      mediaRecorder.onstop = () => {
+        exportBtn.textContent = '🎥 Download Video';
+        recBadge.classList.remove('recording');
+        const blob = new Blob(recordedChunks, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'delta_cryptobot_motion_graphics.webm';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      };
+
+      mediaRecorder.start();
+
+      // Automatically stop after 1 full playthrough
+      setTimeout(() => {
+        if (mediaRecorder && mediaRecorder.state === 'recording') {
+          mediaRecorder.stop();
+        }
+      }, (TOTAL_DURATION + 0.5) * 1000);
+    });
+
+    // Start playback
+    requestAnimationFrame(render);
+  </script>
+</body>
+</html>

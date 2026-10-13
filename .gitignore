@@ -10,3 +10,6 @@ coverage/
 *.state.json
 .gemini/
 .system_generated/
+data/
+scratch/
+*.mp4

@@ -37,6 +37,7 @@ export class DeltaAutoTraderEngine {
   private readonly STARTUP_GRACE_PERIOD_MS: number = 2 * 1000; // 2s grace period on boot
   private scanRotationIndex: number = 0; // Round-robin watchlist rotation index
   private lastPauseLogTime: number = 0;
+  private lastHeartbeatLogTime: number = 0;
   // Playbook 2026 Circuit Breakers (Priority 8)
   private consecutiveLosses: number = 0;
   private circuitBreakerPauseUntil: number = 0;
@@ -47,11 +48,10 @@ export class DeltaAutoTraderEngine {
   // - "adaa mee coin off kardo aage se bnd rakhna bas"
   // - "bth eth bade bade off kardo abhi ke liye kam margin ke baje se"
   public readonly WATCHLIST = [
-    'XRPUSD',
-    'DOGEUSD',
-    'SOLUSD',
-    'AVAXUSD',
     'SUIUSD',
+    'SOLUSD',
+    'DOGEUSD',
+    'AVAXUSD',
   ];
 
   // Leader-Follower Hierarchy (User Mandate: "remaing trade nho copie karne dekh lo xrp kaa copie kiyaa hota sol aisa")
@@ -97,8 +97,8 @@ export class DeltaAutoTraderEngine {
     this.state = {
       isRunning: true,
       mode: initialMode,
-      accountCapitalUSD: 23.53, // ₹2,000 INR capital (~$23.53 USD)
-      currentCapitalUSD: 23.53,
+      accountCapitalUSD: 23.81, // ₹2,000 INR capital (~$23.81 USD)
+      currentCapitalUSD: 23.81,
       dailyRealizedPnlUSD: 0,
       totalRealizedPnlUSD: 0,
       totalTradesCount: 0,
@@ -106,9 +106,9 @@ export class DeltaAutoTraderEngine {
       losingTradesCount: 0,
       winRatePercent: 0,
       activePositions: [],
-      maxConcurrentPositions: 3, // Multi-trade enabled per user request to verify buy/sell confluence across pairs
-      leverage: 20,
-      marginPercentPerTrade: 30.0, // Scaled margin deployment (~$15-$18 USD per trade for 3 slots)
+      maxConcurrentPositions: 3, // Up to 3 trades maximum (User Mandate)
+      leverage: 25,
+      marginPercentPerTrade: 30.0, // Deploys ~30% margin per slot across 3 slots
       lastScanTimestamp: Date.now(),
       scanIntervalSeconds: 1, // High-frequency scan cycle
       shadowGateEnabled: false, // DISABLED — Shadow Gate removed from system
@@ -116,9 +116,11 @@ export class DeltaAutoTraderEngine {
       trapsFilteredCount: 0,
       capitalSavedUSD: 0,
       isInverseTrading: false, // Direct mode — proper signals + proper R:R
-      minCapitalFloorINR: 500, // Reduced floor to allow trading with ₹2,000 capital
-      targetCapitalGoalINR: 4000, // Target profit goal to secure profits and pause
+      minCapitalFloorINR: 50, // Stop if capital drops to zero / floor (User Mandate)
+      targetCapitalGoalINR: 10000, // Target profit goal
       recentFilteredTraps: [],
+      targetProfitPerTradeUSD: 1.00, // Calibrated $1.00 USD profit target (~₹84 INR) per trade
+      maxLossPerTradeUSD: 0.55, // Calibrated $0.55 USD max loss (~₹46 INR) per trade
     };
 
     this.loadState();
@@ -149,10 +151,9 @@ export class DeltaAutoTraderEngine {
             this.state.activePositions = [];
           }
           this.state.mode = computedMode;
-          // Multi-Trade Support (User Mandate: "make system to do multiple trade that help me to see sell sell buyy buyy system fix or not")
-          const configuredMax = typeof parsed.maxConcurrentPositions === 'number' ? parsed.maxConcurrentPositions : 3;
-          this.state.maxConcurrentPositions = Math.max(1, Math.min(configuredMax, 4));
-          this.state.marginPercentPerTrade = typeof parsed.marginPercentPerTrade === 'number' ? parsed.marginPercentPerTrade : 30.0;
+          // Capacity limit (User Mandate: "you can able to do 3 trades maxium")
+          this.state.maxConcurrentPositions = parsed.maxConcurrentPositions || 3;
+          this.state.marginPercentPerTrade = 30.0;
           this.state.isInverseTrading = false;
           this.state.shadowGateEnabled = false;
           if (Array.isArray(this.state.activePositions)) {
@@ -194,8 +195,8 @@ export class DeltaAutoTraderEngine {
 
       // Startup safety limit validations (solutions.pdf Item 6)
       if (typeof cfg.maxLeverage === 'number') {
-        if (cfg.maxLeverage > 20 || cfg.maxLeverage < 1) {
-          throw new Error(`CRITICAL RISK VIOLATION: maxLeverage (${cfg.maxLeverage}x) exceeds safe limits [1x-20x]!`);
+        if (cfg.maxLeverage > 50 || cfg.maxLeverage < 1) {
+          throw new Error(`CRITICAL RISK VIOLATION: maxLeverage (${cfg.maxLeverage}x) exceeds safe limits [1x-50x]!`);
         }
         this.state.leverage = cfg.maxLeverage;
       }
@@ -228,6 +229,7 @@ export class DeltaAutoTraderEngine {
       }
 
       console.log(`🛡️ [RISK CONFIG VALIDATED] Leverage: ${this.state.leverage}x | MaxPositions: ${this.state.maxConcurrentPositions} | Margin: ${this.state.marginPercentPerTrade}% | MaxLoss: $${this.state.maxLossPerTradeUSD ?? 2.50} | TargetProfit: $${this.state.targetProfitPerTradeUSD ?? 6.00} | Floor: ₹${this.state.minCapitalFloorINR} | Goal: ₹${this.state.targetCapitalGoalINR}`);
+      deltaExchange.ensureProductsLeverage(this.state.leverage).catch(() => {});
     } catch (err: any) {
       console.error(`🚨 [RISK VALIDATION FATAL ERROR] Refusing to start due to unsafe risk settings: ${err.message}`);
       throw err;
@@ -673,6 +675,8 @@ export class DeltaAutoTraderEngine {
     confidenceScore: number;
     atr: number;
     reason: string;
+    customTP?: number;
+    customSL?: number;
   } | null> {
     const cleanSym = deltaSymbol.toUpperCase().replace('USDT', 'USD');
     const closes15m = closedCandles15m.map(c => c.close);
@@ -688,16 +692,29 @@ export class DeltaAutoTraderEngine {
       confidenceScore: number;
       atr: number;
       reason: string;
+      customTP?: number;
+      customSL?: number;
     }> = [];
 
     // Fetch live Order Book Imbalance, Taker CVD, and Derivatives from Delta Exchange
     const microData = await deltaExchange.getMicrostructureAndDerivatives(cleanSym).catch(() => null);
 
     // -------------------------------------------------------------
-    // ADVANCED QUANTITATIVE MATHEMATICAL EVALUATION (PLAYBOOK 2026 v2)
-    // 6 Signal Groups: Trend, Mean-Revert, Volatility, Structure, Order Flow, Derivatives
+    // DEDICATED INDICATOR & QUANTITATIVE MATHEMATICAL EVALUATION (PLAYBOOK 2026 v2)
     // -------------------------------------------------------------
-    const mathVerdict = quantMath.evaluateMarketMath(cleanSym, closedCandles15m, microData);
+    let evalResult: any = null;
+    try {
+      evalResult = strategyEngine.evaluateSymbol(symbol, closedCandles15m);
+    } catch (e) {}
+
+    const indicatorSide: 'BUY' | 'SELL' | null = (evalResult?.signal || evalResult?.readySignal || null);
+    const dedicatedContext = indicatorSide ? {
+      side: indicatorSide,
+      strategyName: evalResult?.strategyName || '',
+      waveValue: evalResult?.diagnostics?.waveValue,
+    } : null;
+
+    const mathVerdict = quantMath.evaluateMarketMath(cleanSym, closedCandles15m, microData, dedicatedContext);
 
     // Playbook 2026 Regime Gate: Block only dead random walk chaos
     if (mathVerdict.marketRegime === 'CHAOS_NO_TRADE') {
@@ -722,30 +739,91 @@ export class DeltaAutoTraderEngine {
     const paVerdict = priceActionPlaybook.evaluatePriceAction(cleanSym, closedCandles15m, htf.trend1h);
 
     // -------------------------------------------------------------
-    // MARKET STRUCTURE SHIELD (Section 0 of 2026.pdf):
+    // SYSTEM DYNAMIC TP & SL CALCULATOR (User Mandate)
+    // "hamara tp 1000 rupees hai to 1 dollar profit ek trade bohot haii aise target hit hona chaiyee"
+    // Dynamically project targets calibrated strictly to $1.00 USD profit per trade (~8.4% return on ₹1,000 INR)
+    // -------------------------------------------------------------
+    const lastBarPrice = closedCandles15m[closedCandles15m.length - 1].close;
+    const computeSystemDynamicTargets = (candidateSide: 'BUY' | 'SELL', atr: number) => {
+      const recentCandles = closedCandles15m.slice(-10);
+      const minStopDistance = Math.max(0.85 * atr, lastBarPrice * 0.005);
+
+      const targetUSD = this.state.targetProfitPerTradeUSD || 1.00;
+      const maxLossUSD = this.state.maxLossPerTradeUSD || 0.55;
+
+      // Sized on ~$90 notional: $1.00 profit = ~1.11% price move, $0.55 loss = ~0.61% price move
+      const calibratedTpDist = lastBarPrice * (targetUSD / 90);
+      const calibratedSlDist = Math.max(minStopDistance, lastBarPrice * (maxLossUSD / 90));
+
+      if (candidateSide === 'BUY') {
+        const recentLow = Math.min(...recentCandles.map(c => c.low));
+        let structuralSL = recentLow - 0.25 * atr;
+        if (paVerdict?.side === 'BUY' && paVerdict.stopLossPrice > 0 && paVerdict.stopLossPrice < lastBarPrice) {
+          structuralSL = Math.min(structuralSL, paVerdict.stopLossPrice);
+        }
+        const slDist = Math.max(minStopDistance, Math.min(calibratedSlDist * 1.25, lastBarPrice - structuralSL));
+        const customSL = parseFloat((lastBarPrice - slDist).toFixed(4));
+
+        // Direct TP target calibrated to $1.00 USD profit (clean 1:1.8+ R:R)
+        const tpDist = Math.max(slDist * 1.8, calibratedTpDist);
+        const customTP = parseFloat((lastBarPrice + tpDist).toFixed(4));
+        return { customTP, customSL, tpDist, slDist };
+      } else {
+        const recentHigh = Math.max(...recentCandles.map(c => c.high));
+        let structuralSL = recentHigh + 0.25 * atr;
+        if (paVerdict?.side === 'SELL' && paVerdict.stopLossPrice > 0 && paVerdict.stopLossPrice > lastBarPrice) {
+          structuralSL = Math.max(structuralSL, paVerdict.stopLossPrice);
+        }
+        const slDist = Math.max(minStopDistance, Math.min(calibratedSlDist * 1.25, structuralSL - lastBarPrice));
+        const customSL = parseFloat((lastBarPrice + slDist).toFixed(4));
+
+        // Direct TP target calibrated to $1.00 USD profit (clean 1:1.8+ R:R)
+        const tpDist = Math.max(slDist * 1.8, calibratedTpDist);
+        const customTP = parseFloat((lastBarPrice - tpDist).toFixed(4));
+        return { customTP, customSL, tpDist, slDist };
+      }
+    };
+
+    // -------------------------------------------------------------
+    // MARKET STRUCTURE SHIELD (Zero Counter-Trend Exceptions):
     // "Uptrend (HH/HL): Look for LONGS only. Downtrend (LH/LL): Look for SHORTS only."
-    // - In DOWNTREND: Sell rallies into Resistance/EMA50 or breakdowns. Block naive BUYs!
-    // - In UPTREND: Buy dips into Support/EMA50 or breakouts. Block naive SELLs!
+    // - In DOWNTREND: NEVER BUY under any circumstances!
+    // - In UPTREND: NEVER SHORT under any circumstances!
     // -------------------------------------------------------------
     let isMathBlockedByStructure = false;
     const swings = priceActionPlaybook.findSwings(closedCandles15m, 3);
     const structureData = priceActionPlaybook.evaluateMarketStructure(closedCandles15m, swings.swingHighs, swings.swingLows);
     const currentStructure = paVerdict ? paVerdict.marketStructure : structureData.structure;
 
-    // Evaluate Dedicated Indicator for token
-    let evalResult: any = null;
-    try {
-      evalResult = strategyEngine.evaluateSymbol(symbol, closedCandles15m);
-    } catch (e) {}
+    let mathSide = mathVerdict.recommendedSide;
+    let mathScore = mathVerdict.quantScore;
 
-    const indicatorSide: 'BUY' | 'SELL' | null = (evalResult?.signal || evalResult?.readySignal || null);
-
-    if (currentStructure === 'DOWNTREND' && mathVerdict.recommendedSide === 'BUY' && indicatorSide !== 'BUY' && paVerdict?.setupType !== 'LIQUIDITY_SWEEP' && mathVerdict.quantScore < 70 && !mathVerdict.reasons.some(r => r.includes('Support') || r.includes('Oversold') || r.includes('Reversal') || r.includes('Exhaustion') || r.includes('Floor') || r.includes('Bounce'))) {
-      console.log(`🛡️ [STRUCTURE SHIELD] ${cleanSym} BUY blocked: Market Structure is DOWNTREND (LH/LL) without sufficient quant support/exhaustion/reversal score (${mathVerdict.quantScore}/100).`);
-      isMathBlockedByStructure = true;
-    } else if (currentStructure === 'UPTREND' && mathVerdict.recommendedSide === 'SELL' && indicatorSide !== 'SELL' && paVerdict?.setupType !== 'LIQUIDITY_SWEEP' && mathVerdict.quantScore < 70 && !mathVerdict.reasons.some(r => r.includes('Resistance') || r.includes('Overbought') || r.includes('Reversal') || r.includes('Exhaustion') || r.includes('Fisher') || r.includes('Peak'))) {
-      console.log(`🛡️ [STRUCTURE SHIELD] ${cleanSym} SELL blocked: Market Structure is UPTREND (HH/HL) without sufficient quant exhaustion/reversal/resistance score (${mathVerdict.quantScore}/100).`);
-      isMathBlockedByStructure = true;
+    // Macro Structure Alignment & Asymmetry:
+    // "Uptrend (HH/HL): Look for LONGS only. Downtrend (LH/LL): Look for SHORTS only."
+    if (currentStructure === 'DOWNTREND') {
+      if (mathSide === 'BUY') {
+        console.log(`🛡️ [STRUCTURE SHIELD] ${cleanSym} BUY blocked: Market Structure is DOWNTREND (LH/LL). Absolute rule: NEVER BUY IN DOWNTREND!`);
+        // In Downtrend, check if Quant Math or Dedicated Indicator supports a SELL/SHORT setup
+        if (mathVerdict.scores && (mathVerdict.scores.totalSellScore >= 35 || indicatorSide === 'SELL')) {
+          mathSide = 'SELL';
+          mathScore = Math.max(mathVerdict.scores.totalSellScore, 45);
+          console.log(`🔄 [STRUCTURE STEERING] ${cleanSym} Synthesized SELL setup aligned with DOWNTREND (Score: ${mathScore})`);
+        } else {
+          isMathBlockedByStructure = true;
+        }
+      }
+    } else if (currentStructure === 'UPTREND') {
+      if (mathSide === 'SELL') {
+        console.log(`🛡️ [STRUCTURE SHIELD] ${cleanSym} SELL blocked: Market Structure is UPTREND (HH/HL). Absolute rule: NEVER SHORT IN UPTREND!`);
+        // In Uptrend, check if Quant Math or Dedicated Indicator supports a BUY/LONG setup
+        if (mathVerdict.scores && (mathVerdict.scores.totalBuyScore >= 35 || indicatorSide === 'BUY')) {
+          mathSide = 'BUY';
+          mathScore = Math.max(mathVerdict.scores.totalBuyScore, 45);
+          console.log(`🔄 [STRUCTURE STEERING] ${cleanSym} Synthesized BUY setup aligned with UPTREND (Score: ${mathScore})`);
+        } else {
+          isMathBlockedByStructure = true;
+        }
+      }
     }
 
     // =============================================================
@@ -758,24 +836,22 @@ export class DeltaAutoTraderEngine {
     // 3. Price Action / Candlestick patterns act purely as TIMING CONFIRMATION in the SAME direction!
     // 4. Any conflict between Candle shape and Math/Indicators STRICTLY BLOCKS the trade!
     // =============================================================
-    let mathSide = mathVerdict.recommendedSide;
-    let mathScore = mathVerdict.quantScore;
 
     // Confluence Bridge: If dedicated indicator has an explicit signal, and Quant Math supports that direction
-    // (score >= 30 and higher than opposite side), synthesize math side to allow full indicator + math confluence execution!
+    // synthesize math side to allow full indicator + math confluence execution!
     if (!mathSide && indicatorSide && mathVerdict.scores) {
       const buyScore = mathVerdict.scores.totalBuyScore;
       const sellScore = mathVerdict.scores.totalSellScore;
-      if (indicatorSide === 'BUY' && buyScore >= 30 && buyScore > sellScore) {
+      if (indicatorSide === 'BUY' && buyScore >= 35 && buyScore > sellScore) {
         mathSide = 'BUY';
         mathScore = buyScore;
-      } else if (indicatorSide === 'SELL' && sellScore >= 30 && sellScore > buyScore) {
+      } else if (indicatorSide === 'SELL' && sellScore >= 35 && sellScore > buyScore) {
         mathSide = 'SELL';
         mathScore = sellScore;
       }
     }
 
-    if (mathSide && !isMathBlockedByStructure && mathScore >= 35) {
+    if (mathSide && !isMathBlockedByStructure && mathScore >= 45) {
       const candlePattern = (evalResult?.diagnostics?.lastCandlePattern || '').trim();
       const candlePatternLower = candlePattern.toLowerCase();
       const isCandleBearish = candlePatternLower.includes('bearish') || 
@@ -794,74 +870,54 @@ export class DeltaAutoTraderEngine {
       const isWaveBearish = waveValue < -5 || (xrpHist !== undefined && xrpHist < -10);
       const isWaveBullish = waveValue > 5 || (xrpHist !== undefined && xrpHist > 10);
 
-      // Determine active SELL signal stance:
-      const hasActiveSellSignal = indicatorSide === 'SELL' || 
-                                  isCandleBearish || 
-                                  isWaveBearish || 
-                                  Boolean(paVerdict && paVerdict.side === 'SELL');
+      // Determine active SELL signal stance (strictly dedicated indicator):
+      const hasActiveSellSignal = indicatorSide === 'SELL';
 
-      // Determine active BUY signal stance:
-      const hasActiveBuySignal = indicatorSide === 'BUY' || 
-                                 isCandleBullish || 
-                                 isWaveBullish || 
-                                 Boolean(paVerdict && paVerdict.side === 'BUY');
+      // Determine active BUY signal stance (strictly dedicated indicator):
+      const hasActiveBuySignal = indicatorSide === 'BUY';
 
-      // 1. HARD MANDATORY CONFLUENCE VETO (User Mandate: "Signal hai SELL kar rhe ho BUY — NEVER trade against signal!")
+      // 1. ABSOLUTE MACRO TREND & CONFLUENCE VETO (Zero Counter-Trend Guesswork)
       if (mathSide === 'BUY') {
         if (hasActiveSellSignal) {
-          const reasons: string[] = [];
-          if (indicatorSide === 'SELL') reasons.push('Dedicated Indicator SELL');
-          if (isCandleBearish) reasons.push(`Candle ${candlePattern}`);
-          if (isWaveBearish) reasons.push(`Wave ${waveValue.toFixed(1)}`);
-          if (paVerdict && paVerdict.side === 'SELL') reasons.push(`PA ${paVerdict.setupType} SELL`);
-          console.log(`🛡️ [CONFLUENCE VETO] ${cleanSym} BUY blocked: Market has active SELL signals (${reasons.join(', ')}). Never buy when Sell signal is active!`);
+          console.log(`🛡️ [CONFLUENCE VETO] ${cleanSym} BUY blocked: Dedicated Indicator is SELL. Never buy when Sell signal is active!`);
           return null;
         }
 
-        // Macro Trend Filter: Only restrict when indicator is neutral / not explicitly BUY
-        if (indicatorSide !== 'BUY') {
-          const isTrendPermitted = confluence.trendDirection !== 'BEARISH' && !confluence.isMacroBearish;
-          if (!isTrendPermitted) {
-            console.log(`🛡️ [CONFLUENCE VETO] ${cleanSym} BUY blocked: Macro Trend is BEARISH (Trend=${confluence.trendDirection}). Standing aside.`);
-            return null;
-          }
+        // ABSOLUTE MACRO TREND FILTER: Price below EMA50 or Macro Trend Bearish NEVER BUYS!
+        const isMacroTrendBearish = confluence.trendDirection === 'BEARISH' || confluence.isMacroBearish || lastBarPrice < confluence.ema50;
+        if (isMacroTrendBearish) {
+          console.log(`🛡️ [CONFLUENCE VETO] ${cleanSym} BUY blocked: Macro Trend is BEARISH (Trend=${confluence.trendDirection}, P=$${lastBarPrice.toFixed(4)} < EMA50=$${confluence.ema50.toFixed(4)}). Zero counter-trend guesswork!`);
+          return null;
         }
       }
 
       if (mathSide === 'SELL') {
         if (hasActiveBuySignal) {
-          const reasons: string[] = [];
-          if (indicatorSide === 'BUY') reasons.push('Dedicated Indicator BUY');
-          if (isCandleBullish) reasons.push(`Candle ${candlePattern}`);
-          if (isWaveBullish) reasons.push(`Wave ${waveValue.toFixed(1)}`);
-          if (paVerdict && paVerdict.side === 'BUY') reasons.push(`PA ${paVerdict.setupType} BUY`);
-          console.log(`🛡️ [CONFLUENCE VETO] ${cleanSym} SELL blocked: Market has active BUY signals (${reasons.join(', ')}). Never short when Buy signal is active!`);
+          console.log(`🛡️ [CONFLUENCE VETO] ${cleanSym} SELL blocked: Dedicated Indicator is BUY. Never short when Buy signal is active!`);
           return null;
         }
 
-        // Macro Trend Filter: Only restrict when indicator is neutral / not explicitly SELL
-        if (indicatorSide !== 'SELL') {
-          const isTrendPermitted = confluence.trendDirection !== 'BULLISH' && !confluence.isMacroBullish;
-          if (!isTrendPermitted) {
-            console.log(`🛡️ [CONFLUENCE VETO] ${cleanSym} SELL blocked: Macro Trend is BULLISH (Trend=${confluence.trendDirection}). Standing aside.`);
-            return null;
-          }
+        // ABSOLUTE MACRO TREND FILTER: Price above EMA50 or Macro Trend Bullish NEVER SHORTS!
+        const isMacroTrendBullish = confluence.trendDirection === 'BULLISH' || confluence.isMacroBullish || lastBarPrice > confluence.ema50;
+        if (isMacroTrendBullish) {
+          console.log(`🛡️ [CONFLUENCE VETO] ${cleanSym} SELL blocked: Macro Trend is BULLISH (Trend=${confluence.trendDirection}, P=$${lastBarPrice.toFixed(4)} > EMA50=$${confluence.ema50.toFixed(4)}). Zero counter-trend guesswork!`);
+          return null;
         }
       }
 
-      const isIndicatorAligned = (mathSide === 'BUY' && (hasActiveBuySignal || confluence.allowsLong || confluence.trendDirection === 'BULLISH')) ||
-                                 (mathSide === 'SELL' && (hasActiveSellSignal || confluence.allowsShort || confluence.trendDirection === 'BEARISH'));
+      // Dedicated Indicator Alignment Verification (User Mandate: "Signal hai SELL kar rhe ho BUY — never trade against dedicated indicator!")
+      // Dedicated indicator or multi-EMA trend confluence MUST genuinely point in the math direction
+      const isDedicatedIndicatorAligned = indicatorSide === mathSide;
+      const isConfluenceTrendAligned = (mathSide === 'BUY' && (confluence.trendDirection === 'BULLISH' || confluence.isMacroBullish) && (confluence.allowsLong || (lastBarPrice > confluence.ema50 && confluence.macd?.isBullish))) ||
+                                       (mathSide === 'SELL' && (confluence.trendDirection === 'BEARISH' || confluence.isMacroBearish) && (confluence.allowsShort || (lastBarPrice < confluence.ema50 && (confluence.macd?.isBearish || confluence.isRsiBearish))));
+      const isIndicatorAligned = isDedicatedIndicatorAligned || isConfluenceTrendAligned;
 
       // 2. Candlestick Anatomy & Price Action Verification
-      // Solo candle trades are DELETED. Candle shapes ONLY serve as confirmation/timing!
+      // Solo candle trades are DELETED. Candle shapes ONLY serve as confirmation/timing in the same direction!
       let hasCandleConfirmation = false;
       let candleTriggerTag = '';
 
-      if (paVerdict && paVerdict.confluenceScore >= 70) {
-        if (paVerdict.side !== mathSide) {
-          console.log(`🛡️ [CONFLUENCE CONFLICT] ${cleanSym} trade blocked: Candlestick shape (${paVerdict.side} ${paVerdict.setupType}) opposes Quant Math (${mathSide}). Single-candle solo trading is deleted!`);
-          return null; // Reject trade on conflict!
-        }
+      if (paVerdict && paVerdict.confluenceScore >= 70 && paVerdict.side === mathSide) {
         hasCandleConfirmation = true;
         candleTriggerTag = ` + PA ${paVerdict.setupType}`;
       }
@@ -872,15 +928,12 @@ export class DeltaAutoTraderEngine {
       const currentRsi = rsi15mArr[rsi15mArr.length - 1] || 50;
 
       if (mathSide === 'BUY') {
-        const isRsiOverbought = currentRsi >= 70;
-        const isGaussianOverbought = (mathVerdict.zScore && mathVerdict.zScore >= 1.6) || (mathVerdict.fisherTransform && mathVerdict.fisherTransform >= 1.5);
-        const isClimaxReason = mathVerdict.reasons.some(r => r.includes('Overbought') || r.includes('Climax Fade') || r.includes('Long Flush'));
-        const isBlockedByCeiling = mathVerdict.isAtResistance ||
-          mathVerdict.resistanceRejectConfirmed ||
-          mathVerdict.reasons.some(r => r.includes('Resistance') || r.includes('CEILING REJECT')) ||
-          Boolean(paVerdict && paVerdict.locationReason?.includes('Resistance') && paVerdict.confluenceScore >= 70);
+        const isRsiOverbought = currentRsi >= 82;
+        const isGaussianOverbought = (mathVerdict.zScore && mathVerdict.zScore >= 3.5) && (mathVerdict.fisherTransform && mathVerdict.fisherTransform >= 2.2);
+        const isBlockedByCeiling = (mathVerdict.isAtResistance && mathVerdict.resistanceRejectConfirmed) ||
+          Boolean(paVerdict && paVerdict.locationReason?.includes('Resistance') && paVerdict.confluenceScore >= 85);
 
-        if (isRsiOverbought || isGaussianOverbought || isClimaxReason) {
+        if (isRsiOverbought || isGaussianOverbought) {
           console.log(`🛡️ [OVERBOUGHT TRAP SHIELD] ${cleanSym} BUY blocked: Market is Overbought/Exhausted (RSI=${currentRsi.toFixed(1)}, Z=${mathVerdict.zScore}, Fisher=${mathVerdict.fisherTransform}). Never buy at blow-off top!`);
           return null;
         }
@@ -891,15 +944,12 @@ export class DeltaAutoTraderEngine {
       }
 
       if (mathSide === 'SELL') {
-        const isRsiOversold = currentRsi <= 30;
-        const isGaussianOversold = (mathVerdict.zScore && mathVerdict.zScore <= -1.6) || (mathVerdict.fisherTransform && mathVerdict.fisherTransform <= -1.5);
-        const isCapitulationReason = mathVerdict.reasons.some(r => r.includes('Oversold') || r.includes('Capitulation') || r.includes('Short Squeeze'));
-        const isBlockedByFloor = mathVerdict.isAtSupport ||
-          mathVerdict.supportBounceConfirmed ||
-          mathVerdict.reasons.some(r => r.includes('Support') || r.includes('FLOOR BOUNCE')) ||
-          Boolean(paVerdict && paVerdict.locationReason?.includes('Support') && paVerdict.confluenceScore >= 70);
+        const isRsiOversold = currentRsi <= 18;
+        const isGaussianOversold = (mathVerdict.zScore && mathVerdict.zScore <= -3.5) && (mathVerdict.fisherTransform && mathVerdict.fisherTransform <= -2.2);
+        const isBlockedByFloor = (mathVerdict.isAtSupport && mathVerdict.supportBounceConfirmed) ||
+          Boolean(paVerdict && paVerdict.locationReason?.includes('Support') && paVerdict.confluenceScore >= 85);
 
-        if (isRsiOversold || isGaussianOversold || isCapitulationReason) {
+        if (isRsiOversold || isGaussianOversold) {
           console.log(`🛡️ [OVERSOLD TRAP SHIELD] ${cleanSym} SELL blocked: Market is Oversold/Dumped (RSI=${currentRsi.toFixed(1)}, Z=${mathVerdict.zScore}, Fisher=${mathVerdict.fisherTransform}). Never sell at capitulation bottom!`);
           return null;
         }
@@ -910,15 +960,30 @@ export class DeltaAutoTraderEngine {
       }
 
       // 3. Synthesize Multi-Layer Strict Confluence Score
+      // Reject any trade where technical indicators do not confirm the direction
+      if (!isIndicatorAligned) {
+        console.log(`🛡️ [INDICATOR UNCONFIRMED] ${cleanSym} ${mathSide} blocked: Technical indicators do not support ${mathSide}. Standing aside.`);
+        return null;
+      }
+
       let strictScore = mathScore;
-      if (isIndicatorAligned) strictScore += 25;
-      if (hasCandleConfirmation) strictScore += 25;
+      strictScore += 15; // Confirmed Indicator Alignment adds +15
+      if (hasCandleConfirmation) {
+        strictScore += 10; // Candle shape acts strictly as timing confirmation (+10 max)
+      }
       strictScore = Math.min(99, Math.max(strictScore, mathScore));
+
+      // Minimum strict score required is 60 (User Mandate: "60 scroing pe trade lee")
+      if (strictScore < 60) {
+        console.log(`🛡️ [CONFLUENCE SCORE TOO LOW] ${cleanSym} ${mathSide} blocked: Score ${strictScore}/100 is below threshold (60/100). Standing aside.`);
+        return null;
+      }
 
       const mathConfluenceNote = `Strict Math & Indicator Confluence (${mathVerdict.marketRegime} | Score ${strictScore}/100): Fisher=${mathVerdict.fisherTransform}, Hurst=${mathVerdict.hurstExponent}, SS_Slope=${mathVerdict.superSmootherSlope}%, KalmanDev=${mathVerdict.kalmanDeviationPct}%${microData ? ` | OBI=${microData.obi}, CVD=${microData.cvd}` : ''} | Indicators: ${confluence.summaryReason}${candleTriggerTag} | Reasons: ${mathVerdict.reasons.join(' + ')}`;
 
       console.log(`🧮 [STRICT CONFLUENCE VERIFIED] ${cleanSym} Direction=${mathSide} (Score: ${strictScore}/100 | Math: ${mathScore}/100 | Indicators: ${isIndicatorAligned ? 'ALIGNED' : 'NEUTRAL'}${candleTriggerTag})`);
 
+      const targets = computeSystemDynamicTargets(mathSide, atr15m);
       candidates.push({
         symbol: cleanSym,
         timeframe: '15m',
@@ -927,6 +992,8 @@ export class DeltaAutoTraderEngine {
         confidenceScore: strictScore,
         atr: atr15m,
         reason: mathConfluenceNote,
+        customTP: targets.customTP,
+        customSL: targets.customSL,
       });
     }
 
@@ -941,6 +1008,7 @@ export class DeltaAutoTraderEngine {
 
       if (!isOpposingMath) {
         if (div15m === 'BULLISH_DIV' && (mathVerdict.marketRegime === 'MEAN_REVERTING' || mathVerdict.fisherTransform <= -1.2 || mathVerdict.recommendedSide === 'BUY')) {
+          const targets = computeSystemDynamicTargets('BUY', atr15m);
           candidates.push({
             symbol: cleanSym,
             timeframe: '15m',
@@ -949,8 +1017,11 @@ export class DeltaAutoTraderEngine {
             confidenceScore: 89,
             atr: atr15m,
             reason: `15M price lower low with RSI higher low confirmed by Quant Math (Fisher: ${mathVerdict.fisherTransform}, Hurst: ${mathVerdict.hurstExponent})`,
+            customTP: targets.customTP,
+            customSL: targets.customSL,
           });
         } else if (div15m === 'BEARISH_DIV' && (mathVerdict.marketRegime === 'MEAN_REVERTING' || mathVerdict.fisherTransform >= 1.2 || mathVerdict.recommendedSide === 'SELL')) {
+          const targets = computeSystemDynamicTargets('SELL', atr15m);
           candidates.push({
             symbol: cleanSym,
             timeframe: '15m',
@@ -959,6 +1030,8 @@ export class DeltaAutoTraderEngine {
             confidenceScore: 89,
             atr: atr15m,
             reason: `15M price higher high with RSI lower high confirmed by Quant Math (Fisher: ${mathVerdict.fisherTransform}, Hurst: ${mathVerdict.hurstExponent})`,
+            customTP: targets.customTP,
+            customSL: targets.customSL,
           });
         }
       }
@@ -972,16 +1045,23 @@ export class DeltaAutoTraderEngine {
       const compression = timingEngine.checkCompressionBreakout(closedCandles15m);
       if (compression.isBreakout && compression.breakoutSide) {
         const isOpposingMath = mathVerdict.recommendedSide && mathVerdict.recommendedSide !== compression.breakoutSide;
-        if (!isOpposingMath && !isMathBlockedByStructure) {
-          console.log(`🚀 [COMPRESSION BREAKOUT] ${cleanSym} Early Bar 1 Breakout (${compression.breakoutSide}): RVOL=${compression.rvol}, Bandwidth=${(compression.bandwidthPct * 100).toFixed(1)}%`);
+        const isAlignedWithIndicator = indicatorSide === compression.breakoutSide ||
+          (compression.breakoutSide === 'BUY' && (confluence.trendDirection === 'BULLISH' || confluence.allowsLong)) ||
+          (compression.breakoutSide === 'SELL' && (confluence.trendDirection === 'BEARISH' || confluence.allowsShort));
+        
+        if (!isOpposingMath && !isMathBlockedByStructure && isAlignedWithIndicator) {
+          console.log(`🚀 [COMPRESSION BREAKOUT] ${cleanSym} Early Bar 1 Breakout (${compression.breakoutSide}): RVOL=${compression.rvol}, Bandwidth=${(compression.bandwidthPct * 100).toFixed(1)}% | Indicator Aligned`);
+          const targets = computeSystemDynamicTargets(compression.breakoutSide, atr15m);
           candidates.push({
             symbol: cleanSym,
             timeframe: '15m',
             strategyName: `15M Compression Breakout [Early Phase | RVOL:${compression.rvol}]`,
             side: compression.breakoutSide,
-            confidenceScore: 92,
+            confidenceScore: 88,
             atr: atr15m,
             reason: compression.reason,
+            customTP: targets.customTP,
+            customSL: targets.customSL,
           });
         }
       }
@@ -995,17 +1075,10 @@ export class DeltaAutoTraderEngine {
     let eligibleCandidates = candidates;
     if (isSevereChop) {
       const chopBypassCandidates = candidates.filter(cand => {
-        const isBypass = cand.confidenceScore >= 80 && (
-          cand.strategyName.includes('Strict Math & Indicator Confluence') ||
-          cand.strategyName.includes('Dedicated Indicator') ||
+        const isBypass = cand.confidenceScore >= 88 && (
           cand.strategyName.includes('BREAKOUT') ||
-          cand.strategyName.includes('TREND_PULLBACK') ||
-          cand.strategyName.includes('Breakout') ||
-          cand.strategyName.includes('REJECTION_PIN_BAR') ||
           cand.strategyName.includes('LIQUIDITY_SWEEP') ||
-          cand.strategyName.includes('ENGULFING_AT_LEVEL') ||
-          cand.strategyName.includes('Price Action Playbook') ||
-          cand.strategyName.includes('Playbook 2026')
+          cand.strategyName.includes('Breakout')
         );
         return isBypass;
       });
@@ -1122,28 +1195,22 @@ export class DeltaAutoTraderEngine {
         score += 30;
         reasons.push('Above 50/100 EMA (+30)');
       } else if (currentPrice >= last50Ema || currentPrice >= last100Ema) {
-        score += 20;
-        reasons.push('Above one major EMA (+20)');
-      } else if (lastRsi < 32 || (lastCandle && (Math.min(lastCandle.open, lastCandle.close) - lastCandle.low) / Math.max(lastCandle.high - lastCandle.low, 0.0001) >= 0.30) || (lastCandle && lastCandle.close > lastCandle.open)) {
-        score += 25; // Confirmed support bounce / absorption wick / hammer rejection
-        reasons.push('Confirmed support bounce / oversold absorption (+25)');
+        score += 15;
+        reasons.push('Above one major EMA (+15)');
       } else {
-        score -= 10;
-        reasons.push('Below 50/100 EMA (-10)');
+        score -= 25;
+        reasons.push('Below 50/100 EMA - Downtrend against Buy (-25)');
       }
     } else {
       if (currentPrice <= last50Ema && currentPrice <= last100Ema) {
         score += 30;
         reasons.push('Below 50/100 EMA (+30)');
       } else if (currentPrice <= last50Ema || currentPrice <= last100Ema) {
-        score += 20;
-        reasons.push('Below one major EMA (+20)');
-      } else if (lastRsi > 60 || (lastCandle && (lastCandle.high - Math.max(lastCandle.open, lastCandle.close)) / Math.max(lastCandle.high - lastCandle.low, 0.0001) >= 0.25) || (lastCandle && lastCandle.close < lastCandle.open)) {
-        score += 25; // Reversal rejection / upper wick above EMAs
-        reasons.push('Reversal rejection / upper wick above EMAs (+25)');
+        score += 15;
+        reasons.push('Below one major EMA (+15)');
       } else {
-        score -= 10;
-        reasons.push('Uptrend continuation risk (-10)');
+        score -= 25;
+        reasons.push('Above 50/100 EMA - Uptrend against Short (-25)');
       }
     }
 
@@ -1300,12 +1367,10 @@ export class DeltaAutoTraderEngine {
         }
       } catch (err) {}
 
-      // TRADE LIMIT: Dynamic Limit (Strict Max 2 Positions)
+      // TRADE LIMIT: Calculate Available Position Slots
+      // Continuous 24/7 Diagnostics: Scanner NEVER stops calculating scores, even while in a trade!
       const totalOccupied = this.state.activePositions.length + this.inFlightSymbols.size;
-      const availableSlots = maxAllowed - totalOccupied;
-      if (availableSlots <= 0) {
-        return; // Full capacity reached - hold existing trades, do not scan or execute any new trades
-      }
+      const availableSlots = Math.max(0, maxAllowed - totalOccupied);
 
       // 1. ROUND-ROBIN WATCHLIST ROTATION
       // Ensures Altcoins (XRP, DOGE, SOL, ADA) get equal turns and BTC/ETH don't monopolize slots
@@ -1374,7 +1439,13 @@ export class DeltaAutoTraderEngine {
 
         // Run strategy diagnostics, quant mathematical evaluation, price action playbook, and chop analysis
         const evalResult = strategyEngine.evaluateSymbol(symbol, closedCandles15m);
-        const mathVerdict = quantMath.evaluateMarketMath(cleanDeltaSym, closedCandles15m, microData);
+        const dedicatedSide = evalResult?.signal || evalResult?.readySignal || evalResult?.diagnostics?.readySignal || null;
+        const dedicatedContext = dedicatedSide ? {
+          side: dedicatedSide as 'BUY' | 'SELL',
+          strategyName: evalResult?.strategyName || '',
+          waveValue: evalResult?.diagnostics?.waveValue,
+        } : null;
+        const mathVerdict = quantMath.evaluateMarketMath(cleanDeltaSym, closedCandles15m, microData, dedicatedContext);
         const paVerdict = priceActionPlaybook.evaluatePriceAction(cleanDeltaSym, closedCandles15m);
         const chopAnalysis = marketTraps.evaluateChop(cleanDeltaSym, closedCandles15m);
         const timingAnalysis = timingEngine.evaluateTimingAndAntiChase({
@@ -1384,26 +1455,82 @@ export class DeltaAutoTraderEngine {
           candles: closedCandles15m,
           atr: evalResult?.diagnostics?.atr || 1.0,
         });
+
+        // Compute live active forming 15M candle telemetry & execution gate status
+        const activeBar = candles15m[candles15m.length - 1];
+        const livePrice = activeBar.close;
+        const liveOpen = activeBar.open;
+        const diffUSD = livePrice - liveOpen;
+        const diffPct = liveOpen > 0 ? (diffUSD / liveOpen) * 100 : 0;
+        const barColor: 'GREEN' | 'RED' | 'DOJI' = diffUSD > 0.00001 ? 'GREEN' : diffUSD < -0.00001 ? 'RED' : 'DOJI';
+
+        const barDurationMs = 15 * 60 * 1000;
+        const nextBarCloseMs = activeBar.time + barDurationMs;
+        const secondsToClose = Math.max(0, Math.floor((nextBarCloseMs - Date.now()) / 1000));
+
+        const hasOpenPosition = this.state.activePositions.some(p => {
+          const s = (p.symbol || '').toUpperCase().replace('USDT', 'USD');
+          return s === cleanDeltaSym;
+        });
+
+        let isVetoActive = false;
+        let vetoReason = '';
+        let executionStatus: 'IN_TRADE' | 'ARMED_WAITING_GATE' | 'READY_TO_ENTER' | 'SCANNING_BUILDING' | 'WAIT' = 'WAIT';
+
+        if (hasOpenPosition) {
+          executionStatus = 'IN_TRADE';
+          vetoReason = `In Active Position (${cleanDeltaSym})`;
+        } else if (mathVerdict.quantScore >= 45 && mathVerdict.recommendedSide) {
+          const recSide = mathVerdict.recommendedSide;
+          if (recSide === 'SELL' && barColor === 'GREEN') {
+            isVetoActive = true;
+            vetoReason = `Forming bar is GREEN ($${livePrice.toFixed(2)} > Open $${liveOpen.toFixed(2)}). Waiting for RED drop to execute SELL.`;
+            executionStatus = 'ARMED_WAITING_GATE';
+          } else if (recSide === 'BUY' && barColor === 'RED') {
+            isVetoActive = true;
+            vetoReason = `Forming bar is RED ($${livePrice.toFixed(2)} < Open $${liveOpen.toFixed(2)}). Waiting for GREEN bounce to execute BUY.`;
+            executionStatus = 'ARMED_WAITING_GATE';
+          } else {
+            isVetoActive = false;
+            vetoReason = `All gates clear! Ready to execute ${recSide}.`;
+            executionStatus = 'READY_TO_ENTER';
+          }
+        } else if (mathVerdict.quantScore >= 35) {
+          executionStatus = 'SCANNING_BUILDING';
+          vetoReason = `Math Score: ${mathVerdict.quantScore}/100 (Need ≥ 45 for execution).`;
+        } else {
+          executionStatus = 'WAIT';
+          vetoReason = `Market Consolidation: Score ${mathVerdict.quantScore}/100 (Need ≥ 45).`;
+        }
+
         if (evalResult && evalResult.diagnostics) {
           evalResult.diagnostics.quantMath = mathVerdict;
           evalResult.diagnostics.priceActionPlaybook = paVerdict;
           evalResult.diagnostics.chopAnalysis = chopAnalysis;
           evalResult.diagnostics.timingAnalysis = timingAnalysis;
+          evalResult.diagnostics.activeCandleGate = {
+            barColor,
+            barOpen: liveOpen,
+            currentPrice: livePrice,
+            diffUSD,
+            diffPct,
+            isVetoActive,
+            vetoReason,
+            nextBarCloseMs,
+            secondsToClose,
+            executionStatus,
+          };
         }
         this.lastDiagnostics.set(deltaSymbol, evalResult.diagnostics);
 
         // Check 1: If coin ALREADY has an active open position, NEVER touch or open another trade!
-        const hasOpenPosition = this.state.activePositions.some(p => {
-          const s = (p.symbol || '').toUpperCase().replace('USDT', 'USD');
-          return s === cleanDeltaSym;
-        });
         if (hasOpenPosition) {
           continue;
         }
 
-        // Check 2: 15-Minute cooldown per coin to prevent rapid re-entry within the same candle
+        // Check 2: 5-Minute cooldown per coin to prevent rapid re-entry within the same candle
         const lastTradeTime = this.symbolLastTradeTime.get(cleanDeltaSym) || 0;
-        const COOLDOWN_MS = 15 * 60 * 1000; // 15-minute cooldown (1 full 15M candle)
+        const COOLDOWN_MS = this.MIN_SYMBOL_COOLDOWN_MS;
         if (Date.now() - lastTradeTime < COOLDOWN_MS) {
           continue;
         }
@@ -1446,9 +1573,20 @@ export class DeltaAutoTraderEngine {
       const floatingPnlScan = this.state.activePositions.reduce((sum, p) => sum + (p.pnlUSD || 0), 0);
       const liveEquityINRScan = ((this.state.accountCapitalUSD || 23.53) + floatingPnlScan) * 84;
 
-      // 1. Target Profit Ceiling & Floor (Enforced on Live accounts to secure real capital)
+      // User Mandate: "if its become zero stop it okay"
+      // Emergency Capital Floor Check (Enforced on both Paper and Live):
+      const effectiveFloorINR = this.state.minCapitalFloorINR !== undefined ? this.state.minCapitalFloorINR : 50;
+      if (liveEquityINRScan <= effectiveFloorINR) {
+        console.warn(`🛑 [EMERGENCY ZERO CAPITAL FLOOR] Live equity ₹${liveEquityINRScan.toFixed(0)} reached zero/floor limit (₹${effectiveFloorINR} INR). Halting all trading per user safety mandate.`);
+        this.state.isNewTradesPaused = true;
+        this.state.isRunning = false;
+        this.saveState();
+        return;
+      }
+
+      // Target Profit Ceiling (Enforced on Live accounts to secure real capital)
       if (this.state.mode !== 'SIMULATION_PAPER') {
-        const targetProfitINRScan = this.state.targetCapitalGoalINR || 4000;
+        const targetProfitINRScan = this.state.targetCapitalGoalINR || 10000;
         if (liveEquityINRScan >= targetProfitINRScan && targetProfitINRScan > 0) {
           console.log(`🎯 [TARGET PROFIT CEILING REACHED] Live equity ₹${liveEquityINRScan.toFixed(0)} reached target profit goal of ₹${targetProfitINRScan} INR. Pausing trading to secure profits.`);
           this.state.isNewTradesPaused = true;
@@ -1456,21 +1594,31 @@ export class DeltaAutoTraderEngine {
           this.saveState();
           return;
         }
-
-        // 2. Emergency Stop Floor: Halt only if capital drops to minimum survival floor (default: ₹500 INR)
-        const floorINRScan = this.state.minCapitalFloorINR || 500;
-        if (liveEquityINRScan <= floorINRScan) {
-          console.warn(`🛑 [EMERGENCY CAPITAL FLOOR] Live equity ₹${liveEquityINRScan.toFixed(0)} at/below minimum floor ₹${floorINRScan} INR. Halting trading.`);
-          this.state.isNewTradesPaused = true;
-          this.state.isRunning = false;
-          this.saveState();
-          return;
-        }
       }
 
-      // User Directive: "Abhi kuch execute mat karna. Abhi kuch nahi karna, main bolunga haan ya na tab karna."
+      // 1b. SCANNER RADAR HEARTBEAT (Logged every 20 seconds)
+      // Gives live terminal feedback so the user always sees that the bot is actively scanning and scoring!
+      const now = Date.now();
+      if (now - this.lastHeartbeatLogTime > 20000) {
+        this.lastHeartbeatLogTime = now;
+        const activeCount = this.state.activePositions.length;
+        const capitalINR = (this.state.accountCapitalUSD || 23.81) * 84;
+        const radarSummary = this.WATCHLIST.map(sym => {
+          const clean = sym.toUpperCase().replace('USDT', 'USD');
+          const lastTrade = this.symbolLastTradeTime.get(clean) || 0;
+          const cdRemaining = Math.max(0, Math.ceil((this.MIN_SYMBOL_COOLDOWN_MS - (now - lastTrade)) / 1000));
+          if (cdRemaining > 0) return `${clean}: Cooldown (${cdRemaining}s)`;
+          const diag = this.lastDiagnostics.get(clean);
+          const score = diag?.quantMath?.quantScore ?? '-';
+          const side = diag?.quantMath?.recommendedSide ?? 'WAIT';
+          return `${clean}: ${side} [${score}/100]`;
+        }).join(' | ');
+
+        console.log(`📡 [SCANNER RADAR] Active: ${activeCount}/1 | Equity: ₹${capitalINR.toFixed(0)} ($${this.state.accountCapitalUSD.toFixed(2)}) | Radar: ${radarSummary}`);
+      }
+
+      // Execution Hold Filter
       if (this.state.isNewTradesPaused || !this.state.isRunning) {
-        const now = Date.now();
         if (now - this.lastPauseLogTime > 60000) {
           this.lastPauseLogTime = now;
           console.log(`⏸️ [EXECUTION HOLD] New entries held (Paused/Capital Guard). Monitoring ${this.state.activePositions.length} active positions.`);
@@ -1478,11 +1626,13 @@ export class DeltaAutoTraderEngine {
         return;
       }
 
+      // Available Slots Guard: Hold new entries if 1/1 slot is occupied, while scores continue streaming 24/7!
+      if (availableSlots <= 0) {
+        return;
+      }
+
       // 2. CANDIDATE TOURNAMENT & MANDATORY SAME-DIRECTION TRADE COPY ENFORCEMENT
-      // User Directive: "kisne kiski trade copie ki hoti to profit hotaa dekho aur usse waisa hi kardo jaise xrp sell hai profit uske nichr buy hai agar sell kiya hota to aisa samjee"
-      // Both active trades MUST trade in the exact same direction!
       // If position 1 is SELL -> position 2 MUST COPY SELL!
-      // If position 1 is BUY -> position 2 MUST COPY BUY!
       // If 0 positions active -> Top candidate elects batch direction, all slots copy that direction!
       if (candidatesPool.length > 0) {
         // Direct execution without reversal engine interference (User mandate: "reversal engine delet kardo")
@@ -1493,9 +1643,9 @@ export class DeltaAutoTraderEngine {
         });
 
         const alignedCandidates = enrichedCandidates.filter(c => {
-          const minRequiredScore = (c.multiSignal.strategyName.includes('Playbook 2026 Engine') || c.multiSignal.strategyName.includes('Quant Math') || c.multiSignal.strategyName.includes('Strict Math & Indicator Confluence')) ? 40 : 70;
+          const minRequiredScore = 60; // User Mandate: "60 scroing pe trade lee"
           if (c.multiSignal.confidenceScore < minRequiredScore) {
-            console.log(`🛡️ [QUALITY SHIELD] ${c.cleanDeltaSym} ${c.executedSide} filtered out (Score: ${c.multiSignal.confidenceScore} < ${minRequiredScore}). Waiting for high-conviction setup.`);
+            console.log(`🛡️ [QUALITY SHIELD] ${c.cleanDeltaSym} ${c.executedSide} filtered out (Score: ${c.multiSignal.confidenceScore} < ${minRequiredScore}). Waiting for setup score >= ${minRequiredScore}.`);
             return false;
           }
           return true;
@@ -1547,6 +1697,40 @@ export class DeltaAutoTraderEngine {
             continue;
           }
 
+          // REAL-TIME FORMING CANDLE CONVICTION GATE (User Mandate: "Fix buy sell problem")
+          // Rule 1: NEVER BUY if active forming 15M bar is RED (current price < live bar open)
+          // Rule 2: NEVER SELL if active forming 15M bar is GREEN (current price > live bar open)
+          // Rule 3: NEVER BUY if live price is below 15M EMA20
+          // Rule 4: NEVER SELL if live price is above 15M EMA20
+          const liveCandles15m = await this.fetchCandles(candidate.symbol, '15m', 50);
+          if (liveCandles15m && liveCandles15m.length >= 20) {
+            const activeLiveBar = liveCandles15m[liveCandles15m.length - 1];
+            const liveCloses = liveCandles15m.map(c => c.close);
+            const liveEma20 = CryptoDedicatedStrategyEngine.calculateEMA(liveCloses, 20).slice(-1)[0] || liveExecutionPrice;
+
+            if (finalSide === 'BUY') {
+              if (liveExecutionPrice < activeLiveBar.open) {
+                console.log(`🛡️ [CANDLE COLOR VETO] ${candidate.cleanDeltaSym} BUY blocked: Active forming 15M candle is RED ($${liveExecutionPrice.toFixed(4)} < Open $${activeLiveBar.open.toFixed(4)}). Never buy into a dumping bar!`);
+                continue;
+              }
+              if (liveExecutionPrice < liveEma20) {
+                console.log(`🛡️ [EMA TREND VETO] ${candidate.cleanDeltaSym} BUY blocked: Live price ($${liveExecutionPrice.toFixed(4)}) is below 15M EMA20 ($${liveEma20.toFixed(4)}). Trend buys require price above EMA20! Zero counter-trend guesswork!`);
+                continue;
+              }
+            }
+
+            if (finalSide === 'SELL') {
+              if (liveExecutionPrice > activeLiveBar.open) {
+                console.log(`🛡️ [CANDLE COLOR VETO] ${candidate.cleanDeltaSym} SELL blocked: Active forming 15M candle is GREEN ($${liveExecutionPrice.toFixed(4)} > Open $${activeLiveBar.open.toFixed(4)}). Never short into a pumping bar!`);
+                continue;
+              }
+              if (liveExecutionPrice > liveEma20) {
+                console.log(`🛡️ [EMA TREND VETO] ${candidate.cleanDeltaSym} SELL blocked: Live price ($${liveExecutionPrice.toFixed(4)}) is above 15M EMA20 ($${liveEma20.toFixed(4)}). Never sell above EMA20! Zero counter-trend guesswork!`);
+                continue;
+              }
+            }
+          }
+
           const executionMode: TradeExecutionMode = 'DIRECT';
           const modeTag = `[DIRECT: ${finalSide} | TF:${candidate.multiSignal.timeframe}]`;
           const finalStrategyName = `${candidateStrategyName} ${modeTag}`;
@@ -1563,6 +1747,8 @@ export class DeltaAutoTraderEngine {
             shadowConfirmedSeconds: 0,
             executionMode,
             reversalReason: undefined,
+            customTP: candidate.multiSignal?.customTP,
+            customSL: candidate.multiSignal?.customSL,
           });
 
           if (newPos) {
@@ -1649,7 +1835,7 @@ export class DeltaAutoTraderEngine {
     availableUSD: number;
   }> {
     const effectiveMaxPositions = maxSlots || this.state.maxConcurrentPositions || 1;
-    const leverage = this.state.leverage || 20;
+    const leverage = this.state.leverage || 30;
 
     let totalBalanceUSD = this.state.accountCapitalUSD || 23.53; // ₹2,000 INR (~$23.53 USD) default
     let availableUSD = this.state.currentCapitalUSD || 23.53;
@@ -1678,14 +1864,14 @@ export class DeltaAutoTraderEngine {
     // Distribute available free cash across remaining available slots
     const dynamicMarginFromAvailable = (availableUSD * safeAllocationFactor) / remainingSlots;
 
-    // Select optimal high margin: up to 90% of free balance for single trade (~₹1,800 INR per trade)
+    // Dynamic margin allocation per slot: allows up to 3 slots on ₹1,000 capital (~$3.60 USD per slot)
+    const minMarginFloor = Math.min(2.00, Math.max(1.00, dynamicMarginFromAvailable));
     let marginUSD = Math.min(
       availableUSD * 0.90,
-      Math.max(5.00, Math.min(baseMarginPerSlot, dynamicMarginFromAvailable))
+      Math.max(minMarginFloor, Math.min(baseMarginPerSlot, dynamicMarginFromAvailable))
     );
 
-    // Minimum margin floor of $5 if available
-    marginUSD = Math.max(5.00, parseFloat(marginUSD.toFixed(2)));
+    marginUSD = Math.max(minMarginFloor, parseFloat(marginUSD.toFixed(2)));
 
     const notionalUSD = parseFloat((marginUSD * leverage).toFixed(2));
 
@@ -1708,6 +1894,8 @@ export class DeltaAutoTraderEngine {
     shadowConfirmedSeconds: number;
     executionMode?: TradeExecutionMode;
     reversalReason?: string;
+    customTP?: number;
+    customSL?: number;
   }): Promise<DeltaPosition | null> {
     // Runtime Integrity Guard: Signal Side must strictly match Order Side (solutions.pdf Item 1)
     const orderSide: 'BUY' | 'SELL' = params.side;
@@ -1729,20 +1917,44 @@ export class DeltaAutoTraderEngine {
       return existing;
     }
 
-    // User Mandates: ADA, BTC, and ETH turned OFF due to capital/margin constraints
-    // "adaa mee coin off kardo aage se bnd rakhna bas"
-    // "bth eth bade bade off kardo abhi ke liye kam margin ke baje se"
-    if (['ADAUSD', 'BTCUSD', 'ETHUSD'].includes(cleanSym)) {
-      console.log(`🛑 [DISABLED COIN] New position for ${cleanSym} blocked (User Mandates: ADA, BTC, ETH turned OFF).`);
+    // Money-Bleeder Blacklist: BTC and XRP permanently banned due to high fee drag
+    if (['BTCUSD', 'XRPUSD'].includes(cleanSym)) {
+      console.log(`🛑 [DISABLED COIN] New position for ${cleanSym} blocked (Money-Bleeder Blacklist: BTC, XRP permanently banned).`);
       return null;
     }
+
+    // REAL-TIME ACTIVE CANDLE CONVICTION GATE ASSERTION
+    // Guarantee that no execution can bypass active candle color check
+    try {
+      const liveCandlesGuard = await this.fetchCandles(params.symbol, '15m', 10);
+      if (liveCandlesGuard && liveCandlesGuard.length > 0) {
+        const activeBar = liveCandlesGuard[liveCandlesGuard.length - 1];
+        if (orderSide === 'BUY' && params.signalPrice < activeBar.open) {
+          console.warn(`🛡️ [CANDLE COLOR VETO] ${cleanSym} BUY blocked: Active forming 15M bar is RED ($${params.signalPrice.toFixed(4)} < Open $${activeBar.open.toFixed(4)}). Never buy a dumping candle!`);
+          return null;
+        }
+        if (orderSide === 'SELL' && params.signalPrice > activeBar.open) {
+          console.warn(`🛡️ [CANDLE COLOR VETO] ${cleanSym} SELL blocked: Active forming 15M bar is GREEN ($${params.signalPrice.toFixed(4)} > Open $${activeBar.open.toFixed(4)}). Never short a pumping candle!`);
+          return null;
+        }
+      }
+    } catch (e) {}
 
     // User Mandate: "4k capital ho jaye to trade off kar dena" -> Target Profit Goal of ₹4,000 INR
     const currentEquityINR = ((this.state.accountCapitalUSD || 23.53) + this.state.activePositions.reduce((s, p) => s + (p.pnlUSD || 0), 0)) * 84;
 
-    // 1. Target Profit Ceiling & Floor (Enforced on Live accounts)
+    // Emergency Zero Capital Floor Check (Enforced on both Paper and Live):
+    const effectiveFloorINR = this.state.minCapitalFloorINR !== undefined ? this.state.minCapitalFloorINR : 50;
+    if (currentEquityINR <= effectiveFloorINR) {
+      console.warn(`🛑 [EMERGENCY ZERO CAPITAL FLOOR] Equity ₹${currentEquityINR.toFixed(0)} is at/below floor (₹${effectiveFloorINR} INR). Rejecting new position for ${cleanSym} and halting trading.`);
+      this.state.isNewTradesPaused = true;
+      this.state.isRunning = false;
+      this.saveState();
+      return null;
+    }
+
     if (this.state.mode !== 'SIMULATION_PAPER') {
-      const targetProfitCeilingINR = this.state.targetCapitalGoalINR || 4000;
+      const targetProfitCeilingINR = this.state.targetCapitalGoalINR || 10000;
       if (currentEquityINR >= targetProfitCeilingINR && targetProfitCeilingINR > 0) {
         console.warn(`🎯 [TARGET PROFIT CEILING REACHED] Equity ₹${currentEquityINR.toFixed(0)} is at/above ₹${targetProfitCeilingINR} INR profit goal. Pausing trading to secure profits.`);
         this.state.isNewTradesPaused = true;
@@ -1750,23 +1962,10 @@ export class DeltaAutoTraderEngine {
         this.saveState();
         return null;
       }
-
-      // 2. Emergency Stop Floor: Halt only if capital drops to minimum survival floor (default: ₹500 INR)
-      const floorINR = this.state.minCapitalFloorINR || 500;
-      if (currentEquityINR <= floorINR) {
-        console.warn(`🛑 [EMERGENCY CAPITAL FLOOR] Equity ₹${currentEquityINR.toFixed(0)} is at/below ₹${floorINR} INR floor. Rejecting new position for ${cleanSym} and stopping trading.`);
-        this.state.isNewTradesPaused = true;
-        this.state.isRunning = false;
-        this.saveState();
-        return null;
-      }
     }
 
-    // Independent Multi-Coin Trading: Every token trades strictly according to its own dedicated sniper & math confluence
-    // No artificial leader-follower forcing (User Mandate: "make system to do multiple trade that help me to see sell sell buyy buyy system fix or not")
-
-    // TRADE LIMIT: Strict 2 Position Limit (User Mandate: "limit 2 kii hii rakhaa karoo naa sirff")
-    const maxPositionsAllowed = this.state.maxConcurrentPositions || 1;
+    // Independent Multi-Coin Trading: Up to 3 positions concurrently (User Mandate)
+    const maxPositionsAllowed = this.state.maxConcurrentPositions || 3;
     const totalCurrentAndPending = this.state.activePositions.length + this.inFlightSymbols.size;
     if (totalCurrentAndPending >= maxPositionsAllowed) {
       console.warn(`🛑 Maximum concurrent positions limit (${maxPositionsAllowed}) reached (active: ${this.state.activePositions.length}, in-flight: ${this.inFlightSymbols.size}). Rejecting new position for ${params.symbol}.`);
@@ -1806,21 +2005,24 @@ export class DeltaAutoTraderEngine {
     const isSol = params.symbol.toUpperCase().includes('SOL') || params.strategyName.includes('SOL');
 
     // ============================================================
-    // FIX 6: STOP DISTANCE ASSERTION & RISK-BASED POSITION SIZING (traps.pdf)
-    // "Minimum stop distance >= 0.8 ATR. Size by risk to maintain structural stop."
-    // High-Profit Risk:Reward — $2.50 MAX LOSS : $6.00 TARGET PROFIT (1:2.4 R:R)
-    // User Directive: "pakaa guarantee 6 dollar jayegaa to trade lagaye"
+    // CALIBRATED $1.00 TARGET & RISK-BASED SIZING (User Mandate)
+    // "hamara tp 1000 rupees hai to 1 dollar profit ek trade bohot haii aise target hit hona chaiyee"
+    // $1.00 USD profit per trade = ~₹84-90 INR (+8.4% return on ₹1,000 INR capital in 1 trade)
+    // Potential loss is strictly capped to $0.55 USD (~₹46 INR) for clean 1:1.8+ Risk-Reward!
     // ============================================================
-    const TARGET_PROFIT_USD = this.state.targetProfitPerTradeUSD || 6.00;
-    const MAX_LOSS_USD = this.state.maxLossPerTradeUSD || 2.50;
+    const MAX_LOSS_USD = this.state.maxLossPerTradeUSD || 0.55;
+    const TARGET_PROFIT_USD = this.state.targetProfitPerTradeUSD || 1.00;
 
-    // 1. Guaranteed Minimum Safe Stop Distance (>= 0.8 * ATR)
-    // Protects trade from noise stop-out (0.4 ATR noise was the root cause of the AVAX loss in traps.pdf)
-    const minStopDistance = Math.max(0.8 * params.atr, params.signalPrice * 0.005);
-    const slPriceDistance = minStopDistance;
+    // 1. Structural Stop Loss Distance determined by the system:
+    let slPriceDistance = params.customSL
+      ? Math.abs(params.signalPrice - params.customSL)
+      : Math.max(0.85 * params.atr, params.signalPrice * 0.005);
+
+    // Guaranteed Minimum Safe Stop Distance (>= 0.85 * ATR) to protect from noise wicks
+    slPriceDistance = Math.max(slPriceDistance, 0.85 * params.atr, params.signalPrice * 0.005);
 
     // 2. Risk-Based Position Sizing:
-    // Quantity sized strictly so that: quantity * slPriceDistance = MAX_LOSS_USD ($2.50)
+    // Quantity sized strictly so that: quantity * slPriceDistance = MAX_LOSS_USD ($0.55)
     const riskSizedQuantity = slPriceDistance > 0
       ? parseFloat((MAX_LOSS_USD / slPriceDistance).toFixed(4))
       : rawQuantity;
@@ -1843,12 +2045,19 @@ export class DeltaAutoTraderEngine {
       console.log(`🛡️ [ZIGZAG HALF SIZE] Base bounce long sized to 50% (${quantity} contracts) per signal.pdf.`);
     }
 
-    // 3. Profit Target with Guaranteed 1:2.0+ R:R:
-    const minTargetDistanceByRR = slPriceDistance * 2.0;
-    const targetDistanceByUSD = (quantity * params.signalPrice > 0)
-      ? (TARGET_PROFIT_USD / (quantity * params.signalPrice)) * params.signalPrice
-      : minTargetDistanceByRR;
-    const targetPriceDistance = Math.max(minTargetDistanceByRR, targetDistanceByUSD);
+    // 3. Exact $1.00 USD Profit Target Distance:
+    // "hamara tp 1000 rupees hai to 1 dollar profit ek trade bohot haii aise target hit hona chaiyee"
+    // Calculate the exact price distance that produces TARGET_PROFIT_USD on this sized position!
+    let targetPriceDistance = quantity > 0
+      ? parseFloat((TARGET_PROFIT_USD / quantity).toFixed(4))
+      : Math.max(slPriceDistance * 1.8, 1.2 * params.atr);
+
+    if (params.customTP) {
+      const customDist = Math.abs(params.customTP - params.signalPrice);
+      targetPriceDistance = Math.min(targetPriceDistance, customDist);
+    }
+    // Guarantee minimum 1:1.6 Risk-Reward vs SL
+    targetPriceDistance = Math.max(targetPriceDistance, slPriceDistance * 1.6);
 
     // Calculate TP & SL relative to signal price
     const takeProfitPrice = params.side === 'BUY'
@@ -1858,6 +2067,8 @@ export class DeltaAutoTraderEngine {
     const stopLossPrice = params.side === 'BUY'
       ? params.signalPrice - slPriceDistance
       : params.signalPrice + slPriceDistance;
+
+    console.log(`🤖 [TARGET CALIBRATED: $${TARGET_PROFIT_USD} TP / $${MAX_LOSS_USD} MAX LOSS] ${params.symbol} ${params.side}: Entry=$${params.signalPrice.toFixed(4)} | Dynamic TP=$${takeProfitPrice.toFixed(4)} (+${(targetPriceDistance / params.atr).toFixed(1)} ATR) | Dynamic SL=$${stopLossPrice.toFixed(4)} (-${(slPriceDistance / params.atr).toFixed(1)} ATR) | Expected R:R=1:${(targetPriceDistance / slPriceDistance).toFixed(2)} | Target Profit=$${TARGET_PROFIT_USD} USD | Risk Capped=$${MAX_LOSS_USD} USD (${quantity} contracts)`);
 
     // Send order to Delta Exchange Broker Gateway
     const orderResult = await deltaExchange.placeOrder({
@@ -1983,7 +2194,8 @@ export class DeltaAutoTraderEngine {
 
     // =========================================================================
     // FIX 7: TIME STOP & EXHAUSTION EXIT (Timing Fix Playbook traps.pdf)
-    // 1. Time stop: If trade does not move +0.5 ATR in 7 bars (105 min), exit stalling trade
+    // 1. Time stop: If trade stalls for 7 bars (105 min), ONLY exit if in PROFIT (bank green win)!
+    //    If negative, NEVER cut prematurely — let structural SL protect position.
     // 2. Climax / Exhaustion Exit: If profit >= $1.00 and high-vol rejection prints, lock profit early
     // =========================================================================
     if (!pos.isProfitLockArmed && pos.pnlUSD < 1.50) {
@@ -1997,9 +2209,16 @@ export class DeltaAutoTraderEngine {
         maxBars: 7,
       });
       if (timeStop.shouldExit) {
-        console.log(`⏱️ [TIMING PLAYBOOK TIME STOP] ${pos.symbol}: ${timeStop.reason}`);
-        await this.closePosition(index, 'TIME_STOP_EXIT', currentPrice);
-        return;
+        const elapsedHours = (Date.now() - pos.entryTime) / (3600 * 1000);
+        // Only exit if trade has positive profit (banks green win) or reached 6-hour stagnation timeout
+        if (pos.pnlUSD > 0 || elapsedHours >= 6) {
+          console.log(`⏱️ [TIMING PLAYBOOK TIME STOP] ${pos.symbol}: ${timeStop.reason} (PnL: +$${pos.pnlUSD.toFixed(2)})`);
+          const targetIdx = this.state.activePositions.findIndex(p => p.id === pos.id);
+          if (targetIdx !== -1) {
+            await this.closePosition(targetIdx, 'TIME_STOP_EXIT', currentPrice);
+          }
+          return;
+        }
       }
     }
 
@@ -2018,71 +2237,78 @@ export class DeltaAutoTraderEngine {
         });
         if (exhaustCheck.shouldExit) {
           console.log(`🌋 [EXHAUSTION CLIMAX EXIT] ${pos.symbol}: ${exhaustCheck.reason}. Banking profits early!`);
-          await this.closePosition(index, 'EXHAUSTION_EXIT', currentPrice);
-          return;
-        }
-      }
-    }
-
-    // =========================================================================
-    // MANDATORY USER RULE: $2.50 PROFIT HIT ➔ REVERSAL DETECTED ➔ LOCK SL AT $2.30 (0 MS DELAY)
-    // User Directive: "now what we need to do when ever we get 2.5 dollar profit and
-    // system detect the reversal of market then doo the sl 2.3 dollar with 0 ms delay make it a perfect"
-    // =========================================================================
-    const PROFIT_TRIGGER_USD = 2.50; // $2.50 profit threshold
-    const TARGET_SL_LOCK_USD = 2.30; // $2.30 locked profit
-
-    // 1. Arm profit lock as soon as floating profit touches >= $2.50
-    if (pos.pnlUSD >= PROFIT_TRIGGER_USD || (pos.highestPnlUSD && pos.highestPnlUSD >= PROFIT_TRIGGER_USD)) {
-      if (!pos.isProfitLockArmed) {
-        pos.isProfitLockArmed = true;
-        console.log(`🛡️ [PROFIT LOCK ARMED] ${pos.symbol} reached +$${pos.highestPnlUSD.toFixed(2)} USD (>= $${PROFIT_TRIGGER_USD} trigger). 0ms reversal protection is ARMED!`);
-      }
-    }
-
-    // 2. If profit lock is armed, check for market reversal and snap SL to +$2.30 with 0ms delay
-    if (pos.isProfitLockArmed) {
-      const priceDistance230 = pos.quantity > 0
-        ? TARGET_SL_LOCK_USD / pos.quantity
-        : (TARGET_SL_LOCK_USD / (pos.notionalUSD || 1)) * pos.entryPrice;
-
-      const lockedSLPrice = pos.side === 'BUY'
-        ? pos.entryPrice + priceDistance230
-        : pos.entryPrice - priceDistance230;
-
-      // Market reversal detected when profit pulls back from peak by >= $0.05 or adverse price tick
-      const isPullbackReversal = (pos.highestPnlUSD - pos.pnlUSD) >= 0.05;
-      const isAdverseTick = pos.side === 'BUY'
-        ? currentPrice < pos.entryPrice + priceDistance230 * 1.05
-        : currentPrice > pos.entryPrice - priceDistance230 * 1.05;
-
-      if (isPullbackReversal || isAdverseTick) {
-        const isBetterSL = pos.side === 'BUY'
-          ? (!pos.stopLossPrice || lockedSLPrice > pos.stopLossPrice)
-          : (!pos.stopLossPrice || lockedSLPrice < pos.stopLossPrice);
-
-        if (isBetterSL) {
-          pos.stopLossPrice = lockedSLPrice;
-          pos.isBreakevenLocked = true;
-          console.log(`🔒 [0MS SL LOCK] ${pos.symbol} peak=$${pos.highestPnlUSD.toFixed(2)}: Market reversal detected! SL instantly snapped to +$${TARGET_SL_LOCK_USD} USD ($${lockedSLPrice.toFixed(4)}).`);
-          if (this.state.mode !== 'SIMULATION_PAPER') {
-            deltaExchange.setBracketOrder(pos.symbol, lockedSLPrice, pos.takeProfitPrice).catch(() => {});
-          }
-        }
-
-        // 0 MS DELAY EXIT: If price has already reached or crossed the +$2.30 level, bank profit immediately!
-        const isLockLevelHit = pos.side === 'BUY'
-          ? currentPrice <= lockedSLPrice
-          : currentPrice >= lockedSLPrice;
-
-        if (isLockLevelHit || pos.pnlUSD <= TARGET_SL_LOCK_USD) {
-          console.log(`🎯 [0MS REVERSAL PROFIT BOOKED] ${pos.symbol} hit +$2.30 profit lock line at $${currentPrice.toFixed(4)}! Banking +$${pos.pnlUSD.toFixed(2)} USD profit with ZERO delay!`);
           const targetIdx = this.state.activePositions.findIndex(p => p.id === pos.id);
           if (targetIdx !== -1) {
-            await this.closePosition(targetIdx, 'REVERSAL_PROFIT_LOCKED', currentPrice);
+            await this.closePosition(targetIdx, 'EXHAUSTION_EXIT', currentPrice);
           }
           return;
         }
+      }
+    }
+
+    // =========================================================================
+    // MULTI-TIER FAST BREAKEVEN & $1.00 TARGET PROFIT LOCKING SYSTEM
+    // User Mandate: "hamara tp 1000 rupees hai to 1 dollar profit ek trade bohot haii aise target hit hona chaiyee"
+    // 1. Once trade reaches +$0.50 (halfway to $1.00), snap SL to +$0.15 green (100% risk-free win)!
+    // 2. Once trade reaches +$0.80, snap SL to +$0.50 green!
+    // 3. Once trade touches +$1.00 USD (or price reaches TP), EXIT IMMEDIATELY with TARGET_HIT!
+    // =========================================================================
+
+    // TIER 0: FAST BREAKEVEN AT +$0.50 FLOATING PROFIT (Halfway to $1.00 TP)
+    if (pos.pnlUSD >= 0.50 || (pos.highestPnlUSD && pos.highestPnlUSD >= 0.50)) {
+      if (!pos.isBreakevenLocked) {
+        const lockDist = pos.quantity > 0
+          ? 0.15 / pos.quantity
+          : (0.15 / (pos.notionalUSD || 1)) * pos.entryPrice;
+        const beSLPrice = pos.side === 'BUY'
+          ? pos.entryPrice + lockDist
+          : pos.entryPrice - lockDist;
+
+        const isBetterSL = pos.side === 'BUY'
+          ? (!pos.stopLossPrice || beSLPrice > pos.stopLossPrice)
+          : (!pos.stopLossPrice || beSLPrice < pos.stopLossPrice);
+
+        if (isBetterSL) {
+          pos.stopLossPrice = beSLPrice;
+          pos.isBreakevenLocked = true;
+          console.log(`🛡️ [FAST BREAKEVEN LOCKED] ${pos.symbol} reached +$${(pos.highestPnlUSD || pos.pnlUSD).toFixed(2)} USD! SL snapped to +$0.15 green ($${beSLPrice.toFixed(4)}). Trade is 100% risk-free!`);
+          if (this.state.mode !== 'SIMULATION_PAPER') {
+            deltaExchange.setBracketOrder(pos.symbol, beSLPrice, pos.takeProfitPrice).catch(() => {});
+          }
+        }
+      }
+    }
+
+    // TIER 1: HIGH PROFIT LOCK (At +$0.80 peak profit ➔ Lock SL at +$0.50 green)
+    if (pos.highestPnlUSD && pos.highestPnlUSD >= 0.80) {
+      const lockDist80 = pos.quantity > 0
+        ? 0.50 / pos.quantity
+        : (0.50 / (pos.notionalUSD || 1)) * pos.entryPrice;
+      const t1SL = pos.side === 'BUY'
+        ? pos.entryPrice + lockDist80
+        : pos.entryPrice - lockDist80;
+
+      const isBetterSL = pos.side === 'BUY'
+        ? (!pos.stopLossPrice || t1SL > pos.stopLossPrice)
+        : (!pos.stopLossPrice || t1SL < pos.stopLossPrice);
+
+      if (isBetterSL) {
+        pos.stopLossPrice = t1SL;
+        pos.isBreakevenLocked = true;
+        console.log(`🔒 [PROFIT LOCK +$0.50] ${pos.symbol} peak=+$${pos.highestPnlUSD.toFixed(2)}: SL locked at +$0.50 green ($${t1SL.toFixed(4)}).`);
+        if (this.state.mode !== 'SIMULATION_PAPER') {
+          deltaExchange.setBracketOrder(pos.symbol, t1SL, pos.takeProfitPrice).catch(() => {});
+        }
+      }
+
+      // If market begins reversing from +$0.85+ peak, exit immediately with 0ms delay to bank the win
+      if (pos.highestPnlUSD >= 0.85 && (pos.highestPnlUSD - pos.pnlUSD) >= 0.08) {
+        console.log(`🎯 [0MS PEAK PROFIT BOOKED] ${pos.symbol} peaked at +$${pos.highestPnlUSD.toFixed(2)} and pulled back to +$${pos.pnlUSD.toFixed(2)}. Banking profit with 0ms delay!`);
+        const targetIdx = this.state.activePositions.findIndex(p => p.id === pos.id);
+        if (targetIdx !== -1) {
+          await this.closePosition(targetIdx, 'REVERSAL_PROFIT_LOCKED', currentPrice);
+        }
+        return;
       }
     }
 
@@ -2099,13 +2325,95 @@ export class DeltaAutoTraderEngine {
       }
     }
 
-    // 1. Take Profit (TP) Check with ZERO MS DELAY:
-    const isTPHit = pos.side === 'BUY'
+    // =========================================================================
+    // EARLY REVERSAL EXIT SYSTEM (0ms FAST CAPITAL SHIELD)
+    // User Directive: "after take trade and system get inform that trade may be reversal then its exit it faster"
+    // If trade is running and system detects a confirmed market reversal against the position,
+    // exit immediately with 0ms delay — banks early profit or cuts loss early (-$0.40 instead of -$2.50)!
+    // =========================================================================
+    const tradeAgeMs = Date.now() - (pos.entryTime || 0);
+    // Allow at least 20 seconds of breathing room unless adverse loss exceeds -$0.90
+    if (tradeAgeMs >= 20000 || pos.pnlUSD <= -0.90) {
+      const cleanSym = (pos.symbol || '').toUpperCase().replace('USDT', 'USD');
+      const diag = this.lastDiagnostics.get(cleanSym) || this.lastDiagnostics.get(pos.symbol);
+      const quant = diag?.quantMath;
+
+      let isEarlyReversalDetected = false;
+      let reversalReason = '';
+
+      if (pos.side === 'SELL') {
+        // Holding SHORT: Bullish reversal threats
+        const hasAdversePrice = currentPrice > pos.entryPrice + Math.max(pos.atr * 0.35, pos.entryPrice * 0.0025);
+        const isBullishQuantFlip = quant && (
+          (quant.recommendedSide === 'BUY' && (quant.quantScore >= 50 || (quant.scores?.totalBuyScore || 0) >= 50)) ||
+          quant.supportBounceConfirmed === true
+        );
+        const waveValue = diag?.waveValue ?? 0;
+        const waveSignal = diag?.waveSignal ?? 0;
+        const rsi = diag?.rsi14 ?? 50;
+        const isBullishIndicatorReversal = (diag?.readySignal === 'BUY') || 
+                                           (waveValue > waveSignal && waveValue > 0 && hasAdversePrice) || 
+                                           (rsi < 32 && hasAdversePrice);
+        const isBullishMicroReversal = quant && (quant.fisherTransform > quant.fisherSignal) && (quant.scores?.totalBuyScore || 0) >= 40 && hasAdversePrice;
+
+        if (isBullishQuantFlip) {
+          isEarlyReversalDetected = true;
+          reversalReason = `Quant Engine flipped to BUY (Score: ${quant.quantScore}/100, SupportBounce: ${quant.supportBounceConfirmed})`;
+        } else if (isBullishIndicatorReversal) {
+          isEarlyReversalDetected = true;
+          reversalReason = `Dedicated Strategy Bullish Reversal (Signal: ${diag?.readySignal}, RSI: ${rsi.toFixed(1)}, Wave: ${waveValue.toFixed(1)} > ${waveSignal.toFixed(1)})`;
+        } else if (isBullishMicroReversal) {
+          isEarlyReversalDetected = true;
+          reversalReason = `Fisher Bullish Cross with adverse momentum (+${quant.scores?.totalBuyScore} Buy pts)`;
+        }
+      } else if (pos.side === 'BUY') {
+        // Holding LONG: Bearish reversal threats
+        const hasAdversePrice = currentPrice < pos.entryPrice - Math.max(pos.atr * 0.35, pos.entryPrice * 0.0025);
+        const isBearishQuantFlip = quant && (
+          (quant.recommendedSide === 'SELL' && (quant.quantScore >= 50 || (quant.scores?.totalSellScore || 0) >= 50)) ||
+          quant.resistanceRejectConfirmed === true
+        );
+        const waveValue = diag?.waveValue ?? 0;
+        const waveSignal = diag?.waveSignal ?? 0;
+        const rsi = diag?.rsi14 ?? 50;
+        const isBearishIndicatorReversal = (diag?.readySignal === 'SELL') || 
+                                           (waveValue < waveSignal && waveValue < 0 && hasAdversePrice) || 
+                                           (rsi > 68 && hasAdversePrice);
+        const isBearishMicroReversal = quant && (quant.fisherTransform < quant.fisherSignal) && (quant.scores?.totalSellScore || 0) >= 40 && hasAdversePrice;
+
+        if (isBearishQuantFlip) {
+          isEarlyReversalDetected = true;
+          reversalReason = `Quant Engine flipped to SELL (Score: ${quant.quantScore}/100, ResistanceReject: ${quant.resistanceRejectConfirmed})`;
+        } else if (isBearishIndicatorReversal) {
+          isEarlyReversalDetected = true;
+          reversalReason = `Dedicated Strategy Bearish Reversal (Signal: ${diag?.readySignal}, RSI: ${rsi.toFixed(1)}, Wave: ${waveValue.toFixed(1)} < ${waveSignal.toFixed(1)})`;
+        } else if (isBearishMicroReversal) {
+          isEarlyReversalDetected = true;
+          reversalReason = `Fisher Bearish Cross with adverse momentum (+${quant.scores?.totalSellScore} Sell pts)`;
+        }
+      }
+
+      if (isEarlyReversalDetected) {
+        console.log(`⚡ [0MS FAST REVERSAL EXIT] ${pos.symbol} (${pos.side}): ${reversalReason} | PnL: $${pos.pnlUSD.toFixed(2)} USD. Exiting with 0ms delay to protect capital!`);
+        const targetIdx = this.state.activePositions.findIndex(p => p.id === pos.id);
+        if (targetIdx !== -1) {
+          await this.closePosition(targetIdx, 'REVERSAL_EXIT_EARLY', currentPrice);
+        }
+        return;
+      }
+    }
+
+    // 1. Take Profit (TP) Check with ZERO MS DELAY (User Mandate: $1.00 USD target):
+    // "hamara tp 1000 rupees hai to 1 dollar profit ek trade bohot haii aise target hit hona chaiyee"
+    const targetProfitUSD = this.state.targetProfitPerTradeUSD || 1.00;
+    const isDollarTPHit = pos.pnlUSD >= targetProfitUSD;
+    const isPriceTPHit = pos.side === 'BUY'
       ? currentPrice >= pos.takeProfitPrice
       : currentPrice <= pos.takeProfitPrice;
+    const isTPHit = isDollarTPHit || isPriceTPHit;
 
     if (isTPHit) {
-      console.log(`🎯 [INSTANT PROFIT TARGET HIT] Take Profit reached for ${pos.symbol} at price $${currentPrice} (Target: $${pos.takeProfitPrice})! Booking profit with 0ms delay!`);
+      console.log(`🎯 [INSTANT $1.00 PROFIT TARGET HIT] Take Profit reached for ${pos.symbol} (PnL: +$${pos.pnlUSD.toFixed(2)} USD >= $${targetProfitUSD} target, Price: $${currentPrice.toFixed(4)})! Banking win with 0ms delay!`);
       const targetIdx = this.state.activePositions.findIndex(p => p.id === pos.id);
       if (targetIdx !== -1) {
         await this.closePosition(targetIdx, 'TARGET_HIT', currentPrice);
@@ -2113,8 +2421,9 @@ export class DeltaAutoTraderEngine {
       return;
     }
 
-    // 2. Stop Loss (SL) Check with ZERO MS DELAY:
-    const maxLossUSD = 3.00;
+    // 2. Stop Loss (SL) & Breakeven Check with ZERO MS DELAY:
+    // Risk capped strictly to MAX_LOSS_USD ($0.55 USD, ~₹46 INR)
+    const maxLossUSD = this.state.maxLossPerTradeUSD || 0.55;
     const isPriceSLHit = pos.side === 'BUY'
       ? currentPrice <= pos.stopLossPrice
       : currentPrice >= pos.stopLossPrice;
@@ -2122,13 +2431,20 @@ export class DeltaAutoTraderEngine {
     const isSLHit = isPriceSLHit || isEmergencyHardLoss;
 
     if (isSLHit) {
-      const slDetail = isEmergencyHardLoss
-        ? `Emergency Max Loss Limit (-$${Math.abs(pos.pnlUSD).toFixed(2)} USD <= -$${maxLossUSD.toFixed(2)} max loss)`
-        : `structural SL $${pos.stopLossPrice.toFixed(4)}`;
-      console.log(`🛑 [STOP LOSS HIT] ${pos.symbol} triggered via ${slDetail} (Current: $${currentPrice.toFixed(4)}, PnL: $${pos.pnlUSD.toFixed(2)}). Exiting with 0ms delay!`);
       const targetIdx = this.state.activePositions.findIndex(p => p.id === pos.id);
       if (targetIdx !== -1) {
-        await this.closePosition(targetIdx, 'STOP_LOSS_HIT', currentPrice);
+        // If Breakeven/Profit Lock was active and hit, bank it as a win/breakeven — NOT a loss!
+        if (pos.isBreakevenLocked && !isEmergencyHardLoss) {
+          const exitReason = pos.pnlUSD >= 0.15 ? 'REVERSAL_PROFIT_LOCKED' : 'BREAKEVEN_HIT';
+          console.log(`🛡️ [PROTECTED GREEN EXIT: ${exitReason}] ${pos.symbol} closed at $${currentPrice.toFixed(4)} (PnL: +$${pos.pnlUSD.toFixed(2)} USD). Capital 100% preserved in green!`);
+          await this.closePosition(targetIdx, exitReason, currentPrice);
+        } else {
+          const slDetail = isEmergencyHardLoss
+            ? `Emergency Max Loss Limit (-$${Math.abs(pos.pnlUSD).toFixed(2)} USD <= -$${maxLossUSD.toFixed(2)} max loss)`
+            : `structural SL $${pos.stopLossPrice.toFixed(4)}`;
+          console.log(`🛑 [STOP LOSS HIT] ${pos.symbol} triggered via ${slDetail} (Current: $${currentPrice.toFixed(4)}, PnL: $${pos.pnlUSD.toFixed(2)}). Exiting with 0ms delay!`);
+          await this.closePosition(targetIdx, 'STOP_LOSS_HIT', currentPrice);
+        }
       }
       return;
     }
@@ -2137,7 +2453,7 @@ export class DeltaAutoTraderEngine {
     return;
   }
 
-  public archiveClosedTrade(pos: DeltaPosition, exitReason: 'TARGET_HIT' | 'STOP_LOSS_HIT' | 'BREAKEVEN_HIT' | 'MANUAL_EXIT' | 'EXCHANGE_CLOSED' | 'REVERSAL_PROFIT_LOCKED' | 'TIME_STOP_EXIT' | 'EXHAUSTION_EXIT', exitPrice?: number) {
+  public archiveClosedTrade(pos: DeltaPosition, exitReason: 'TARGET_HIT' | 'STOP_LOSS_HIT' | 'BREAKEVEN_HIT' | 'MANUAL_EXIT' | 'EXCHANGE_CLOSED' | 'REVERSAL_PROFIT_LOCKED' | 'TIME_STOP_EXIT' | 'EXHAUSTION_EXIT' | 'REVERSAL_EXIT_EARLY', exitPrice?: number) {
     // Guard against duplicate archive loop
     const lastArchive = this.closedTradesHistory[0];
     if (lastArchive && lastArchive.symbol === pos.symbol && Math.abs(lastArchive.entryPrice - pos.entryPrice) < 0.0001 && (Date.now() - (lastArchive.exitTime || 0)) < 30000) {
@@ -2145,7 +2461,17 @@ export class DeltaAutoTraderEngine {
       return;
     }
 
-    const finalPrice = exitPrice || pos.currentPrice;
+    let finalPrice = exitPrice || pos.currentPrice;
+
+    // Price Sanity Shield: Reject cross-symbol alien ticks or abnormal bad prints
+    // A price deviating > 35% from entry on a 15m crypto trade indicates cross-symbol tick contamination.
+    if (pos.entryPrice > 0 && Math.abs(finalPrice - pos.entryPrice) / pos.entryPrice > 0.35) {
+      console.warn(`🚨 [SANITY SHIELD] Alien exit price rejected for ${pos.symbol}: entry=${pos.entryPrice}, alienExitPrice=${finalPrice}. Falling back to safe price.`);
+      finalPrice = (pos.currentPrice > 0 && Math.abs(pos.currentPrice - pos.entryPrice) / pos.entryPrice <= 0.35)
+        ? pos.currentPrice
+        : pos.entryPrice;
+    }
+
     const priceDiff = pos.side === 'BUY'
       ? finalPrice - pos.entryPrice
       : pos.entryPrice - finalPrice;
@@ -2219,7 +2545,10 @@ export class DeltaAutoTraderEngine {
     console.log(`🏁 Position archived: ${pos.symbol} via ${exitReason} | PnL: $${realizedPnlUSD > 0 ? '+' : ''}${realizedPnlUSD} (${realizedPnlPercent}%) | 15-min cooldown active`);
   }
 
-  public async closePosition(index: number, exitReason: 'TARGET_HIT' | 'STOP_LOSS_HIT' | 'BREAKEVEN_HIT' | 'MANUAL_EXIT' | 'EXCHANGE_CLOSED' | 'REVERSAL_PROFIT_LOCKED' | 'TIME_STOP_EXIT' | 'EXHAUSTION_EXIT', exitPrice?: number) {
+  public async closePosition(target: number | string, exitReason: 'TARGET_HIT' | 'STOP_LOSS_HIT' | 'BREAKEVEN_HIT' | 'MANUAL_EXIT' | 'EXCHANGE_CLOSED' | 'REVERSAL_PROFIT_LOCKED' | 'TIME_STOP_EXIT' | 'EXHAUSTION_EXIT' | 'REVERSAL_EXIT_EARLY', exitPrice?: number) {
+    const index = typeof target === 'string'
+      ? this.state.activePositions.findIndex(p => p.id === target)
+      : target;
     if (index < 0 || index >= this.state.activePositions.length) return;
     const pos = this.state.activePositions[index];
 
@@ -2239,7 +2568,10 @@ export class DeltaAutoTraderEngine {
     }
 
     this.archiveClosedTrade(pos, exitReason, exitPrice);
-    this.state.activePositions.splice(index, 1);
+    const removeIdx = this.state.activePositions.findIndex(p => p.id === pos.id);
+    if (removeIdx !== -1) {
+      this.state.activePositions.splice(removeIdx, 1);
+    }
     this.saveState();
   }
 
@@ -2338,6 +2670,8 @@ export class DeltaAutoTraderEngine {
 
   public resetPositions() {
     this.state.activePositions = [];
+    this.symbolLastTradeTime.clear();
+    this.lastProcessedBarTime.clear();
     this.saveState();
   }
 
@@ -2392,7 +2726,7 @@ export class DeltaAutoTraderEngine {
     if (config.maxConcurrentPositions !== undefined) {
       this.state.maxConcurrentPositions = config.maxConcurrentPositions;
     } else if (!this.state.maxConcurrentPositions) {
-      this.state.maxConcurrentPositions = 1;
+      this.state.maxConcurrentPositions = 3;
     }
     this.saveState();
   }

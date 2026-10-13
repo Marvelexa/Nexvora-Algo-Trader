@@ -83,14 +83,14 @@ export class DeltaExchangeEngine {
       this.config.wsUrl = isTestnet ? 'wss://socket-ind.testnet.deltaex.org' : 'wss://socket.india.delta.exchange';
     }
     if (apiKey && apiSecret && !isSimulation) {
-      this.ensureProductsLeverage(20).catch(() => {});
+      this.ensureProductsLeverage(30).catch(() => {});
     }
   }
 
   /**
    * Sets order leverage for all supported trading products on Delta Exchange
    */
-  public async ensureProductsLeverage(leverage: number = 20): Promise<void> {
+  public async ensureProductsLeverage(leverage: number = 30): Promise<void> {
     if (!this.config.apiKey || !this.config.apiSecret || this.config.isSimulation) return;
     try {
       const res = await this.request('GET', '/v2/products');
@@ -182,10 +182,10 @@ export class DeltaExchangeEngine {
 
           const bal = totalEquity > 0
             ? totalEquity
-            : (usdtBal ? parseFloat(usdtBal.balance || '59.61') : 59.61);
+            : (usdtBal ? parseFloat(usdtBal.balance || '23.81') : 23.81);
           const avail = usdtBal
-            ? parseFloat(usdtBal.available_balance || usdtBal.balance || '56.67')
-            : (totalEquity > 0 ? totalEquity : 56.67);
+            ? parseFloat(usdtBal.available_balance || usdtBal.balance || '23.81')
+            : (totalEquity > 0 ? totalEquity : 23.81);
 
           return {
             balanceUSD: parseFloat(bal.toFixed(2)),
@@ -199,8 +199,8 @@ export class DeltaExchangeEngine {
     }
 
     return {
-      balanceUSD: 59.61,
-      availableUSD: 56.67,
+      balanceUSD: 23.81,
+      availableUSD: 23.81,
       currency: 'USD',
     };
   }
@@ -531,21 +531,35 @@ export class DeltaExchangeEngine {
     try {
       const nowSec = Math.floor(Date.now() / 1000);
       let stepSec = 15 * 60;
-      if (resolution === '1m') stepSec = 60;
-      else if (resolution === '3m') stepSec = 3 * 60;
-      else if (resolution === '5m') stepSec = 5 * 60;
-      else if (resolution === '30m') stepSec = 30 * 60;
-      else if (resolution === '1h') stepSec = 60 * 60;
-      else if (resolution === '4h') stepSec = 4 * 60 * 60;
-      else if (resolution === '1d') stepSec = 24 * 60 * 60;
+      let deltaRes = '15';
+      if (resolution === '1m') { stepSec = 60; deltaRes = '1'; }
+      else if (resolution === '3m') { stepSec = 3 * 60; deltaRes = '3'; }
+      else if (resolution === '5m') { stepSec = 5 * 60; deltaRes = '5'; }
+      else if (resolution === '15m') { stepSec = 15 * 60; deltaRes = '15'; }
+      else if (resolution === '30m') { stepSec = 30 * 60; deltaRes = '30'; }
+      else if (resolution === '1h') { stepSec = 60 * 60; deltaRes = '60'; }
+      else if (resolution === '4h') { stepSec = 4 * 60 * 60; deltaRes = '240'; }
+      else if (resolution === '1d') { stepSec = 24 * 60 * 60; deltaRes = 'D'; }
 
       const startSec = nowSec - (limit * stepSec);
       const res = await this.request('GET', '/v2/chart/history', {
         symbol: deltaSymbol,
-        resolution,
-        start: startSec.toString(),
-        end: nowSec.toString(),
+        resolution: deltaRes,
+        from: startSec.toString(),
+        to: nowSec.toString(),
       });
+
+      const r = res?.result;
+      if (r && Array.isArray(r.t) && r.t.length > 0) {
+        return r.t.map((t: number, i: number) => ({
+          time: t > 10000000000 ? t : t * 1000,
+          open: parseFloat(r.o[i]),
+          high: parseFloat(r.h[i]),
+          low: parseFloat(r.l[i]),
+          close: parseFloat(r.c[i]),
+          volume: parseFloat(r.v[i] || '0'),
+        }));
+      }
 
       const list = res?.result || [];
       if (Array.isArray(list) && list.length > 0) {

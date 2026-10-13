@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { DeltaAutoTraderCard } from './DeltaAutoTraderCard';
+import { LiveTradeScoresSidebar } from './LiveTradeScoresSidebar';
 import { 
   Shield, 
   Settings, 
@@ -97,8 +98,18 @@ export const CryptoBotTab: React.FC<CryptoBotTabProps> = ({ onSelectCoin }) => {
         </div>
       </div>
 
-      {/* Primary AutoTrader Card */}
-      <DeltaAutoTraderCard onSelectCoin={onSelectCoin} />
+      {/* 2-COLUMN RESPONSIVE LAYOUT: LEFT SIDE LIVE SCORES SECTION + RIGHT SIDE AUTOTRADER CARDS */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+        {/* LEFT COLUMN: LIVE TRADE SCORES SECTION */}
+        <div className="lg:col-span-4 xl:col-span-4 space-y-4">
+          <LiveTradeScoresSidebar onSelectCoin={onSelectCoin} />
+        </div>
+
+        {/* RIGHT COLUMN: MAIN AUTOTRADER WORKSPACE */}
+        <div className="lg:col-span-8 xl:col-span-8 space-y-4">
+          <DeltaAutoTraderCard onSelectCoin={onSelectCoin} />
+        </div>
+      </div>
 
       {/* Institutional Strategy Reference Guide */}
       <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 text-xs text-slate-400 space-y-3">

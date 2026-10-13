@@ -473,8 +473,9 @@ export class QuantMathematicalEngine {
     const distToSupport = Math.abs(currentPrice - nearestSupport);
     const distToResistance = Math.abs(nearestResistance - currentPrice);
 
-    const isAtSupport = distToSupport <= zoneBuffer * 1.5;
-    const isAtResistance = distToResistance <= zoneBuffer * 1.5;
+    // Mutual Exclusivity: Price cannot be simultaneously at support and resistance unless in noise chop
+    const isAtSupport = distToSupport <= zoneBuffer * 1.2 && distToSupport < distToResistance;
+    const isAtResistance = distToResistance <= zoneBuffer * 1.2 && distToResistance < distToSupport;
 
     const lastBar = candles[n - 1];
     const prevBar = candles[n - 2];
@@ -485,23 +486,37 @@ export class QuantMathematicalEngine {
     const isBullishCandle = lastBar.close > lastBar.open;
     const isBearishCandle = lastBar.close < lastBar.open;
     const isHammerWick = (lowerWickLast / rangeLast) >= 0.35 && (upperWickLast / rangeLast) <= 0.25;
-    const isShootingStarWick = (upperWickLast / rangeLast) >= 0.25;
+    const isShootingStarWick = (upperWickLast / rangeLast) >= 0.25 && (lowerWickLast / rangeLast) <= 0.25;
 
-    // 1. Support Hold (Bounce) — requires genuine bullish close with body or distinct hammer rejection wick
-    const supportBounceConfirmed = isAtSupport && ((isBullishCandle && rangeLast >= atr * 0.25) || isHammerWick || lowerWickLast >= rangeLast * 0.25);
+    // 1. Support Hold (Bounce) — strictly requires being at support (not resistance), bullish candle or strong absorption hammer
+    let supportBounceConfirmed = isAtSupport && !isAtResistance && (
+      (isBullishCandle && rangeLast >= atr * 0.25) ||
+      (isHammerWick && !isBearishCandle) ||
+      (lowerWickLast >= rangeLast * 0.35 && lastBar.close >= prevBar.close)
+    );
 
     // 2. Support Break (Breakdown - close below zone with volume/bearish candle)
     const supportBreakConfirmed = (lastBar.close < (nearestSupport - zoneBuffer * 0.2) || (lastBar.close < nearestSupport && isBearishCandle)) &&
                                   prevBar.close >= (nearestSupport - zoneBuffer * 1.5) &&
                                   (rangeLast >= atr * 0.6 || lastBar.volume >= prevBar.volume * 0.85);
 
-    // 3. Resistance Hold (Rejection)
-    const resistanceRejectConfirmed = isAtResistance && (isBearishCandle || isShootingStarWick || upperWickLast >= rangeLast * 0.25 || lastBar.close < prevBar.close);
+    // 3. Resistance Hold (Rejection) — strictly requires being at resistance (not support), bearish candle or strong shooting star
+    let resistanceRejectConfirmed = isAtResistance && !isAtSupport && (
+      (isBearishCandle && rangeLast >= atr * 0.25) ||
+      (isShootingStarWick && !isBullishCandle) ||
+      (upperWickLast >= rangeLast * 0.35 && lastBar.close <= prevBar.close)
+    );
 
     // 4. Resistance Break (Breakout - close above zone with volume/bullish candle)
     const resistanceBreakConfirmed = (lastBar.close > (nearestResistance + zoneBuffer * 0.2) || (lastBar.close > nearestResistance && isBullishCandle)) &&
                                      prevBar.close <= (nearestResistance + zoneBuffer * 1.5) &&
                                      (rangeLast >= atr * 0.6 || lastBar.volume >= prevBar.volume * 0.85);
+
+    // Ambiguity Veto: If both fire due to extreme volatility wick, neither is a confirmed clean hold
+    if (supportBounceConfirmed && resistanceRejectConfirmed) {
+      supportBounceConfirmed = false;
+      resistanceRejectConfirmed = false;
+    }
 
     return {
       nearestSupport: parseFloat(nearestSupport.toFixed(4)),
@@ -538,7 +553,8 @@ export class QuantMathematicalEngine {
   public static evaluateMarketMath(
     symbol: string,
     candles: KlinePoint[],
-    microstructureData?: MicrostructureDerivativesData | null
+    microstructureData?: MicrostructureDerivativesData | null,
+    dedicatedSignal?: { side: 'BUY' | 'SELL' | null; strategyName?: string; waveValue?: number } | null
   ): QuantMathVerdict {
     const closes = candles.map(c => c.close);
     const currentPrice = closes[closes.length - 1] || 0;
@@ -675,47 +691,70 @@ export class QuantMathematicalEngine {
 
     const reasons: string[] = [];
 
+    const isMacroBearish = sr.macroTrend === 'BEARISH' || (sr.macroTrend !== 'BULLISH' && currentPrice < sr.ema50);
+    const isMacroBullish = sr.macroTrend === 'BULLISH' || (sr.macroTrend !== 'BEARISH' && currentPrice > sr.ema50);
+
     // -------------------------------------------------------------------------
     // GROUP A: TREND / MOMENTUM (Max 20 pts)
     // -------------------------------------------------------------------------
-    // In TREND regime: full momentum points. In RANGE regime: max 5 pts for local bias.
+    // In TREND regime: directional momentum points. In RANGE regime: edge touches & local momentum.
     const priceVsEma50Pct = ((currentPrice - sr.ema50) / (sr.ema50 || 1)) * 100;
+    const isLastBarGreen = lastBar.close > lastBar.open;
+    const isLastBarRed = lastBar.close < lastBar.open;
+    const greenBodyRatio = rangeLast > 0 ? (lastBar.close - lastBar.open) / rangeLast : 0;
+    const redBodyRatio = rangeLast > 0 ? (lastBar.open - lastBar.close) / rangeLast : 0;
 
     if (marketRegime === 'TREND') {
-      // 1. 50/200 EMA Bias Filter (Bias only, not trigger)
+      // 1. 50/200 EMA Bias Filter
       if (priceVsEma50Pct > 0.05 && currentPrice >= sr.ema50) {
-        if (superSmootherSlope >= -0.015) {
+        if (superSmootherSlope >= -0.015 && (!isLastBarRed || redBodyRatio < 0.4)) {
           buyA += 10;
           reasons.push('Trend Bias > EMA50 (+10 A)');
         }
       } else if (priceVsEma50Pct < -0.05 && currentPrice <= sr.ema50) {
-        sellA += 10;
-        reasons.push('Trend Bias < EMA50 (+10 A)');
+        // Only award SELL bias if candle is NOT strongly bouncing green!
+        if (!isLastBarGreen || greenBodyRatio < 0.35) {
+          sellA += 10;
+          reasons.push('Trend Bias < EMA50 (+10 A)');
+        }
       }
 
-      // 2. SuperSmoother 2-Pole Slope (DSP directional velocity)
-      if (superSmootherSlope > 0.015 && currentPrice >= currentSmooth) {
+      // 2. SuperSmoother 2-Pole Slope & Reversal Momentum
+      if (superSmootherSlope > 0.015 && currentPrice >= currentSmooth && !isLastBarRed) {
         buyA += 10;
         reasons.push(`SuperSmoother Uptrend (+${superSmootherSlope.toFixed(3)}%) (+10 A)`);
-      } else if (superSmootherSlope < -0.015) {
+      } else if (superSmootherSlope < -0.015 && (!isLastBarGreen || greenBodyRatio < 0.35)) {
         sellA += 10;
         reasons.push(`SuperSmoother Downtrend (${superSmootherSlope.toFixed(3)}%) (+10 A)`);
-      } else if (sr.resistanceRejectConfirmed || (sr.isAtResistance && (lastBar.close < lastBar.open || upperWickLast / rangeLast >= 0.25))) {
+      } else if (currentPrice >= sr.ema50 && isLastBarGreen && (sr.supportBounceConfirmed || (sr.isAtSupport && lowerWickLast / rangeLast >= 0.20) || currentPrice >= kalmanEstimate || greenBodyRatio >= 0.40 || lastBar.close > prevBar.high)) {
+        // Bullish bounce momentum: only valid when NOT in macro downtrend (< ema50)
+        buyA += 10;
+        reasons.push('Bullish Green Momentum Thrust (+10 A)');
+      } else if (isLastBarRed && (sr.resistanceRejectConfirmed || (sr.isAtResistance && upperWickLast / rangeLast >= 0.20) || currentPrice <= kalmanEstimate || redBodyRatio >= 0.40 || lastBar.close < prevBar.low || currentPrice <= sr.ema50)) {
         sellA += 10;
-        reasons.push('Resistance Rejection Momentum (+10 A)');
+        reasons.push('Bearish Red Momentum Thrust (+10 A)');
       }
     } else {
       // In RANGE regime: local bias and edge touches
-      if (superSmootherSlope > 0.015) buyA += 5;
-      else if (superSmootherSlope < -0.015) sellA += 5;
-      if (sr.resistanceRejectConfirmed || (sr.isAtResistance && (lastBar.close < lastBar.open || upperWickLast / rangeLast >= 0.20))) {
+      if (superSmootherSlope > 0.015 && !isLastBarRed) buyA += 5;
+      else if (superSmootherSlope < -0.015 && !isLastBarGreen) sellA += 5;
+
+      if ((sr.resistanceRejectConfirmed || (sr.isAtResistance && (isLastBarRed || upperWickLast / rangeLast >= 0.20))) && !sr.isAtSupport) {
         sellA += 10;
         reasons.push('Resistance Rejection at Range High (+10 A)');
-      }
-      if (sr.supportBounceConfirmed || (sr.isAtSupport && (lastBar.close > lastBar.open || lowerWickLast / rangeLast >= 0.20))) {
+      } else if ((sr.supportBounceConfirmed || (sr.isAtSupport && (isLastBarGreen || lowerWickLast / rangeLast >= 0.20))) && !sr.isAtResistance) {
         buyA += 10;
         reasons.push('Support Bounce at Range Low (+10 A)');
       }
+    }
+    if (dedicatedSignal?.side === 'BUY') {
+      sellA = 0;
+      buyA = Math.max(buyA, 15);
+      reasons.push(`Dedicated Sniper Bullish Momentum Alignment [${dedicatedSignal.strategyName || 'PRO'}] (+15 A BUY)`);
+    } else if (dedicatedSignal?.side === 'SELL') {
+      buyA = 0;
+      sellA = Math.max(sellA, 15);
+      reasons.push(`Dedicated Sniper Bearish Momentum Alignment [${dedicatedSignal.strategyName || 'PRO'}] (+15 A SELL)`);
     }
     buyA = Math.min(20, buyA);
     sellA = Math.min(20, sellA);
@@ -723,65 +762,76 @@ export class QuantMathematicalEngine {
     // -------------------------------------------------------------------------
     // GROUP B: MEAN-REVERSION / OSCILLATORS (Max 20 pts)
     // -------------------------------------------------------------------------
-    if (marketRegime === 'RANGE') {
-      // 1. Z-Score (Priority 3: Threshold raised to +/- 1.5, requiring reversal confirmation)
-      const isReversalUp = lastBar.close > lastBar.open || isFisherBullishCross || isRsiBullishReclaim;
-      const isReversalDown = lastBar.close < lastBar.open || isFisherBearishCross || isRsiBearishReclaim;
+    const isReversalUp = isLastBarGreen || isFisherBullishCross || isRsiBullishReclaim;
+    const isReversalDown = isLastBarRed || isFisherBearishCross || isRsiBearishReclaim;
 
-      if (zScore <= -1.40 && isReversalUp && !sr.supportBreakConfirmed) {
-        buyB += 10;
-        reasons.push(`Stretched Oversold Z-Score (${zScore}) + Reversal Confirmation (+10 B)`);
-      } else if (zScore >= 1.40 && isReversalDown && !sr.resistanceBreakConfirmed) {
-        sellB += 10;
-        reasons.push(`Stretched Overbought Z-Score (+${zScore}) + Reversal Confirmation (+10 B)`);
+    // 1. Extreme RSI & Mean-Reversion / Trend Momentum Rules:
+    if (currentRsi <= 32 || zScore <= -1.20) {
+      if (isLastBarGreen && !isMacroBearish && (sr.supportBounceConfirmed || isFisherBullishCross || sr.isAtSupport)) {
+        // Confirmed bounce at support in oversold territory -> BUY (only if NOT macro bearish)
+        buyB = Math.max(buyB, 15);
+        sellB = 0;
+        reasons.push(`Oversold Support Bounce Confirmed (RSI: ${currentRsi.toFixed(1)}, Z-Score: ${zScore.toFixed(2)}) (+15 B BUY)`);
+      } else if (isLastBarRed || sr.supportBreakConfirmed || priceVsEma50Pct < -0.05 || isMacroBearish) {
+        // Trend Momentum Breakdown / Dump -> SELL
+        sellA = Math.max(sellA, 15);
+        sellB = Math.max(sellB, 10);
+        buyB = 0;
+        reasons.push(`Trend Momentum Breakdown Dump (RSI: ${currentRsi.toFixed(1)}, Z-Score: ${zScore.toFixed(2)}) (+15 A / +10 B SELL)`);
       }
+    } else if (currentRsi >= 68 || zScore >= 1.20) {
+      if (isLastBarRed && !isMacroBullish && (sr.resistanceRejectConfirmed || isFisherBearishCross || sr.isAtResistance)) {
+        // Confirmed rejection at resistance in overbought territory -> SELL (only if NOT macro bullish)
+        sellB = Math.max(sellB, 15);
+        buyB = 0;
+        reasons.push(`Overbought Resistance Rejection Confirmed (RSI: ${currentRsi.toFixed(1)}, Z-Score: +${zScore.toFixed(2)}) (+15 B SELL)`);
+      } else if (isLastBarGreen || sr.resistanceBreakConfirmed || priceVsEma50Pct > 0.05 || isMacroBullish) {
+        // Trend Momentum Breakout Rally -> BUY
+        buyA = Math.max(buyA, 15);
+        buyB = Math.max(buyB, 10);
+        sellB = 0;
+        reasons.push(`Trend Momentum Breakout Rally (RSI: ${currentRsi.toFixed(1)}, Z-Score: +${zScore.toFixed(2)}) (+15 A / +10 B BUY)`);
+      }
+    }
 
-      // 2. Fisher Transform Reversal Cross from Extreme
-      if (isFisherBullishCross && currentFisher <= -0.60 && !sr.supportBreakConfirmed) {
-        buyB += 10;
-        reasons.push(`Fisher Extreme Bullish Cross (F:${currentFisher.toFixed(2)}) (+10 B)`);
-      } else if (isFisherBearishCross && currentFisher >= 0.60 && !sr.resistanceBreakConfirmed) {
-        sellB += 10;
-        reasons.push(`Fisher Extreme Bearish Cross (F:${currentFisher.toFixed(2)}) (+10 B)`);
-      }
+    // 2. Fisher Transform Reversal Cross from Extreme
+    if (isFisherBullishCross && currentFisher <= -0.50 && !sr.supportBreakConfirmed) {
+      buyB += 10;
+      reasons.push(`Fisher Extreme Bullish Cross (F:${currentFisher.toFixed(2)}) (+10 B)`);
+    } else if (isFisherBearishCross && currentFisher >= 0.50 && !sr.resistanceBreakConfirmed) {
+      sellB += 10;
+      reasons.push(`Fisher Extreme Bearish Cross (F:${currentFisher.toFixed(2)}) (+10 B)`);
+    }
 
-      // 3. RSI Reclaim (dipped below 35 and closed back above 35, or peaked above 65 and closed below 65)
-      if (isRsiBullishReclaim && !sr.supportBreakConfirmed) {
-        buyB += 5;
-        reasons.push(`RSI Bullish Reclaim (${currentRsi.toFixed(1)} > 35) (+5 B)`);
-      } else if (isRsiBearishReclaim && !sr.resistanceBreakConfirmed) {
-        sellB += 5;
-        reasons.push(`RSI Bearish Reclaim (${currentRsi.toFixed(1)} < 65) (+5 B)`);
-      } else if (currentRsi >= 60 && (lastBar.close < lastBar.open || isFisherBearishCross)) {
-        sellB += 5;
-        reasons.push(`RSI Overbought Resistance (${currentRsi.toFixed(1)}) (+5 B)`);
-      }
+    // 3. RSI Reclaim (dipped below 35 and closed back above 35, or peaked above 65 and closed below 65)
+    if (isRsiBullishReclaim && !sr.supportBreakConfirmed) {
+      buyB += 5;
+      reasons.push(`RSI Bullish Reclaim (${currentRsi.toFixed(1)} > 35) (+5 B)`);
+    } else if (isRsiBearishReclaim && !sr.resistanceBreakConfirmed) {
+      sellB += 5;
+      reasons.push(`RSI Bearish Reclaim (${currentRsi.toFixed(1)} < 65) (+5 B)`);
+    } else if (currentRsi >= 60 && (isLastBarRed || isFisherBearishCross)) {
+      sellB += 5;
+      reasons.push(`RSI Overbought Resistance (${currentRsi.toFixed(1)}) (+5 B)`);
+    }
 
-      // 4. Kalman Normalized Deviation
-      if (kalmanNormalizedDev < -0.5 && !sr.supportBreakConfirmed && !isFisherBearishCross) {
-        buyB += 5;
-        reasons.push(`Kalman State Discount (${kalmanNormalizedDev.toFixed(2)} ATR) (+5 B)`);
-      } else if (kalmanNormalizedDev > 0.5 && !sr.resistanceBreakConfirmed && !isFisherBullishCross) {
-        sellB += 5;
-        reasons.push(`Kalman State Premium (+${kalmanNormalizedDev.toFixed(2)} ATR) (+5 B)`);
-      }
-    } else {
-      // In TREND regime: allow pullback entries WITH the trend, and overbought/oversold exhaustion reversals!
-      if ((sr.macroTrend === 'BULLISH' || currentPrice > sr.ema50) && zScore <= -1.2 && isFisherBullishCross) {
-        buyB += 10;
-        reasons.push('Trend Pullback Oversold Dip (+10 B)');
-      } else if ((sr.macroTrend === 'BEARISH' || currentPrice < sr.ema50) && zScore >= 1.2 && isFisherBearishCross) {
-        sellB += 10;
-        reasons.push('Trend Pullback Overbought Rally (+10 B)');
-      } else if (zScore >= 1.3 && (isFisherBearishCross || isRsiBearishReclaim || lastBar.close < lastBar.open || upperWickLast / rangeLast >= 0.25)) {
-        // Overbought Climax Exhaustion Reversal in Uptrend (Playbook 2026 Top Fade)
-        sellB += 10;
-        reasons.push(`Overbought Climax Fade (+${zScore} Z-Score + Bearish Cross) (+10 B SELL)`);
-      } else if (zScore <= -1.3 && (isFisherBullishCross || isRsiBullishReclaim || lastBar.close > lastBar.open)) {
-        // Oversold Capitulation Bounce in Downtrend
-        buyB += 10;
-        reasons.push(`Oversold Capitulation Fade (${zScore} Z-Score + Bullish Cross) (+10 B BUY)`);
-      }
+    // 4. Kalman Normalized Deviation
+    if (kalmanNormalizedDev < -0.5 && !sr.supportBreakConfirmed && !isFisherBearishCross) {
+      buyB += 5;
+      reasons.push(`Kalman State Discount (${kalmanNormalizedDev.toFixed(2)} ATR) (+5 B)`);
+    } else if (kalmanNormalizedDev > 0.5 && !sr.resistanceBreakConfirmed && !isFisherBullishCross) {
+      sellB += 5;
+      reasons.push(`Kalman State Premium (+${kalmanNormalizedDev.toFixed(2)} ATR) (+5 B)`);
+    }
+
+    if (dedicatedSignal?.side === 'BUY') {
+      sellB = 0;
+      buyB = Math.max(buyB, 10);
+      reasons.push('Dedicated Strategy Oversold Confluence (+10 B BUY)');
+    } else if (dedicatedSignal?.side === 'SELL') {
+      buyB = 0;
+      sellB = Math.max(sellB, 10);
+      reasons.push('Dedicated Strategy Overbought Confluence (+10 B SELL)');
     }
     buyB = Math.min(20, buyB);
     sellB = Math.min(20, sellB);
@@ -808,14 +858,7 @@ export class QuantMathematicalEngine {
     // -------------------------------------------------------------------------
     // GROUP D: STRUCTURE (S/R HOLD & CONFIRMED BREAKS) (Max 20 pts)
     // Playbook 2026 Principle: Location + Trigger + Market Structure
-    // - In DOWNTREND: Sell rallies into Resistance/EMA50 or Support breakdowns! Do NOT force buy at support.
-    // - In UPTREND: Buy pullbacks into Support/EMA50 or Resistance breakouts! Do NOT force sell at resistance.
-    // - In RANGE: Trade rejections at boundaries.
-    // - NO artificial score overwriting of other groups!
     // -------------------------------------------------------------------------
-    const isMacroBearish = sr.macroTrend === 'BEARISH' || (sr.macroTrend !== 'BULLISH' && currentPrice < sr.ema50);
-    const isMacroBullish = sr.macroTrend === 'BULLISH' || (sr.macroTrend !== 'BEARISH' && currentPrice > sr.ema50);
-
     if (sr.supportBreakConfirmed) {
       // 1. Confirmed Breakdown below Support
       sellD = 20;
@@ -827,54 +870,70 @@ export class QuantMathematicalEngine {
     } else if (sr.resistanceRejectConfirmed) {
       // 3. Resistance Rejection / Bearish Reversal
       if (isMacroBearish) {
-        // Trend Pullback in Downtrend (Section 5.7: Highest probability setup)
         sellD = 20;
         reasons.push(`🛡️ [DOWNTREND PULLBACK] Rally into Resistance $${sr.nearestResistance} with Bearish Rejection (+20 D SELL)`);
-      } else if (marketRegime === 'RANGE') {
+      } else if (marketRegime === 'RANGE' && !isMacroBullish) {
         sellD = 20;
         reasons.push(`🛡️ [RANGE CEILING REJECTION] Bearish Rejection at Resistance Zone $${sr.nearestResistance} (+20 D SELL)`);
+      } else if (isLastBarRed || upperWickLast / rangeLast >= 0.25) {
+        sellD = 15;
+        reasons.push(`🛡️ [RESISTANCE REJECTION] Bearish Rejection at Resistance Zone $${sr.nearestResistance} (+15 D SELL)`);
       } else {
-        // Top reversal in uptrend (Playbook 2026: fading overbought ceiling)
-        sellD = 20;
-        reasons.push(`🛡️ [TOP REVERSAL] Bearish Rejection at Resistance Zone $${sr.nearestResistance} (+20 D SELL)`);
+        sellD = 0;
       }
     } else if (sr.supportBounceConfirmed) {
       // 4. Support Bounce / Bullish Absorption
       if (isMacroBullish && superSmootherSlope >= -0.015) {
-        // Trend Pullback in Uptrend (Section 5.7: Highest probability setup)
         buyD = 20;
         reasons.push(`🛡️ [UPTREND PULLBACK] Pullback to Support $${sr.nearestSupport} with Bullish Absorption (+20 D BUY)`);
-      } else if (marketRegime === 'RANGE' && superSmootherSlope >= -0.015) {
+      } else if (marketRegime === 'RANGE' && !isMacroBearish && superSmootherSlope >= -0.015) {
         buyD = 20;
         reasons.push(`🛡️ [RANGE FLOOR BOUNCE] Bullish Bounce at Support Zone $${sr.nearestSupport} (+20 D BUY)`);
+      } else if (!isMacroBearish && (isLastBarGreen || lowerWickLast / rangeLast >= 0.25)) {
+        buyD = 15;
+        reasons.push(`🛡️ [SUPPORT ABSORPTION BOUNCE] Confirmed Bullish Absorption at $${sr.nearestSupport} (+15 D BUY)`);
       } else {
-        // Counter-trend dip bounce or falling velocity: award points for bottom bounce/absorption
-        const lastBarD = candles[candles.length - 1];
-        const rangeD = Math.max(lastBarD.high - lastBarD.low, 0.0001);
-        const lowerWickD = Math.min(lastBarD.open, lastBarD.close) - lastBarD.low;
-        if ((lowerWickD / rangeD) >= 0.30 || lastBarD.close > lastBarD.open) {
-          buyD = 20;
-          reasons.push(`🛡️ [SUPPORT ABSORPTION BOUNCE] Bullish Reversal at Support Zone $${sr.nearestSupport} (+20 D BUY)`);
+        // In Macro Bearish Downtrend: support bounces are weak counter-trend tests
+        buyD = 5;
+        if (isLastBarRed || currentPrice <= sr.ema50) {
+          sellD = Math.max(sellD, 15);
+          reasons.push(`Pressure on Support in Macro Downtrend $${sr.nearestSupport} (+15 D SELL)`);
         } else {
-          buyD = 10;
-          reasons.push(`🛡️ [SUPPORT ABSORPTION WICK] Lower wick at Support Zone $${sr.nearestSupport} (+10 D BUY)`);
+          reasons.push(`Testing Support in Macro Downtrend $${sr.nearestSupport} (+5 D BUY)`);
         }
       }
     } else if (sr.isAtResistance && !sr.resistanceBreakConfirmed) {
-      // Testing resistance without confirmed trigger
       sellD = 10;
       reasons.push(`Testing Resistance Zone $${sr.nearestResistance} (+10 D SELL)`);
     } else if (sr.isAtSupport && !sr.supportBreakConfirmed) {
-      // Testing support without confirmed trigger
-      buyD = 10;
-      reasons.push(`Testing Support Zone $${sr.nearestSupport} (+10 D BUY)`);
+      if (isMacroBearish || isLastBarRed) {
+        sellD = Math.max(sellD, 10);
+        buyD = 0;
+        reasons.push(`Testing Support Breakdown Pressure $${sr.nearestSupport} (+10 D SELL)`);
+      } else {
+        buyD = 10;
+        reasons.push(`Testing Support Zone $${sr.nearestSupport} (+10 D BUY)`);
+      }
     } else {
       // Open air structure: reward direction with clean clearance to opposing zone
-      if (currentPrice > sr.nearestSupport && (sr.nearestResistance - currentPrice) > atr * 1.2 && isMacroBullish && superSmootherSlope > 0) {
+      if (currentPrice > sr.nearestSupport && (sr.nearestResistance - currentPrice) > atr * 1.0 && (isLastBarGreen || isMacroBullish)) {
         buyD += 10;
       }
-      if (currentPrice < sr.nearestResistance && (currentPrice - sr.nearestSupport) > atr * 1.2 && (isMacroBearish || superSmootherSlope < -0.015)) {
+      if (currentPrice < sr.nearestResistance && (currentPrice - sr.nearestSupport) > atr * 1.0 && (isLastBarRed || isMacroBearish)) {
         sellD += 10;
+      }
+    }
+    if (dedicatedSignal?.side === 'BUY') {
+      if (!sr.supportBreakConfirmed) {
+        sellD = 0;
+        buyD = Math.max(buyD, 10);
+        reasons.push('Dedicated Strategy Support Bounce Hold (+10 D BUY)');
+      }
+    } else if (dedicatedSignal?.side === 'SELL') {
+      if (!sr.resistanceBreakConfirmed) {
+        buyD = 0;
+        sellD = Math.max(sellD, 10);
+        reasons.push('Dedicated Strategy Resistance Rejection Hold (+10 D SELL)');
       }
     }
     buyD = Math.min(20, buyD);
@@ -970,8 +1029,29 @@ export class QuantMathematicalEngine {
     // Execution threshold: >= 35 points
     // -------------------------------------------------------------------------
     const EXECUTION_THRESHOLD = 35;
-    const totalBuyScore = buyA + buyB + buyC + buyD + buyE + buyF;
-    const totalSellScore = sellA + sellB + sellC + sellD + sellE + sellF;
+    let totalBuyScore = buyA + buyB + buyC + buyD + buyE + buyF;
+    let totalSellScore = sellA + sellB + sellC + sellD + sellE + sellF;
+
+    // Macro Trend & Market Structure Steering (Playbook 2026: Trade With The Trend!)
+    // In DOWNTREND / Macro Bearish (Price < EMA50 or LH/LL):
+    // 1. Never catch falling knives! Cap totalBuyScore <= 25 so it NEVER triggers a counter-trend long!
+    // 2. Trend-following shorts: Add +15 to totalSellScore when price is below EMA50!
+    if (isMacroBearish || currentPrice < sr.ema50) {
+      totalBuyScore = Math.min(totalBuyScore, 25);
+      if (currentPrice < sr.ema50) {
+        totalSellScore = Math.min(99, totalSellScore + 15);
+        reasons.push('Macro Downtrend Steering: Trend follows EMA50 (Capped Buy <= 25, +15 Sell Score)');
+      }
+    } else if (isMacroBullish || currentPrice > sr.ema50) {
+      // In UPTREND / Macro Bullish (Price > EMA50 or HH/HL):
+      // 1. Never short bull breakouts! Cap totalSellScore <= 25 so it NEVER triggers a counter-trend short!
+      // 2. Trend-following longs: Add +15 to totalBuyScore when price is above EMA50!
+      totalSellScore = Math.min(totalSellScore, 25);
+      if (currentPrice > sr.ema50) {
+        totalBuyScore = Math.min(99, totalBuyScore + 15);
+        reasons.push('Macro Uptrend Steering: Trend follows EMA50 (Capped Sell <= 25, +15 Buy Score)');
+      }
+    }
 
     let recommendedSide: 'BUY' | 'SELL' | null = null;
     let finalScore = 50;

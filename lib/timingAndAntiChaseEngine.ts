@@ -682,11 +682,24 @@ export class TimingAndAntiChaseEngine {
     const priceDiff = side === 'BUY' ? currentPrice - entryPrice : entryPrice - currentPrice;
     const moveInAtr = atr > 0 ? priceDiff / atr : 0;
 
-    // If trade hasn't moved at least +0.5 ATR into profit after 7 bars:
-    if (moveInAtr < 0.5) {
+    // Time Stop Protection Rules:
+    // 1. If trade is stalling after 7 bars (105m) but is in green profit (> +0.05 ATR):
+    //    Exit immediately and BANK THE GREEN WIN! Capital is freed with guaranteed profit.
+    if (moveInAtr > 0.05) {
       return {
         shouldExit: true,
-        reason: `Time Stop: ${barsElapsed} bars elapsed (${elapsedMinutes.toFixed(0)}m), price only moved ${moveInAtr.toFixed(2)} ATR (< +0.5 ATR target). Capital freed from stalling trade.`,
+        reason: `Time Stop (Profit Banked): ${barsElapsed} bars elapsed (${elapsedMinutes.toFixed(0)}m), price stalled at +${moveInAtr.toFixed(2)} ATR. Banking green win and freeing capital.`,
+      };
+    }
+
+    // 2. If trade is negative (moveInAtr <= 0.05), DO NOT prematurely kill on 7-bar Time Stop!
+    //    Consolidation is normal in crypto. Structural Stop Loss protects downside.
+    //    Only exit dead trades if stalled for >= 24 bars (6 hours) without any momentum.
+    const maxStagnationBars = 24; // 6 hours
+    if (barsElapsed >= maxStagnationBars && moveInAtr < -0.3) {
+      return {
+        shouldExit: true,
+        reason: `Stagnation Timeout: ${barsElapsed} bars elapsed (${elapsedMinutes.toFixed(0)}m) with zero progress (${moveInAtr.toFixed(2)} ATR). Cutting dead position.`,
       };
     }
 

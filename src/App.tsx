@@ -17,6 +17,7 @@ import { CredentialsModal } from './components/CredentialsModal';
 import { QuickAutoSellModal } from './components/QuickAutoSellModal';
 import { CryptoBotTab } from './components/CryptoBotTab';
 import { OptionsCondorDashboard } from './components/OptionsCondorDashboard';
+import { MotionVideoModal } from './components/MotionVideoModal';
 import { playSuccessChime, playAlertChime } from './utils/audio';
 import { Bell, ShieldCheck, CheckCircle2, AlertTriangle, X, Zap, Cpu, BarChart2, RefreshCw, Shield } from 'lucide-react';
 
@@ -46,6 +47,7 @@ export default function App() {
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [liveWsConnected, setLiveWsConnected] = useState<boolean>(false);
   const [isCredentialsModalOpen, setIsCredentialsModalOpen] = useState<boolean>(false);
+  const [isMotionVideoOpen, setIsMotionVideoOpen] = useState<boolean>(false);
   const [quickModalTicker, setQuickModalTicker] = useState<CryptoTicker | null>(null);
   const [toastNotification, setToastNotification] = useState<{ title: string; message: string; type: 'success' | 'alert' } | null>(null);
   const inrRate = 88.75;
@@ -549,6 +551,7 @@ export default function App() {
       <Header
         exchangeStatus={exchangeStatus}
         onOpenCredentials={() => setIsCredentialsModalOpen(true)}
+        onOpenMotionVideo={() => setIsMotionVideoOpen(true)}
         isAudioEnabled={isAudioEnabled}
         onToggleAudio={() => setIsAudioEnabled(!isAudioEnabled)}
         isRefreshing={isRefreshing}
@@ -590,7 +593,7 @@ export default function App() {
       )}
 
       {/* Main Workspace Layout */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-6">
+      <main className="flex-1 max-w-[1750px] w-full mx-auto p-4 sm:p-6 space-y-6">
         
         {/* Master Mode Switcher Bar & Signal Mode Controller */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-slate-800">
@@ -742,6 +745,11 @@ export default function App() {
         onClose={() => setQuickModalTicker(null)}
         ticker={quickModalTicker}
         onCreateRule={handleCreateRule}
+      />
+
+      <MotionVideoModal
+        isOpen={isMotionVideoOpen}
+        onClose={() => setIsMotionVideoOpen(false)}
       />
 
     </div>

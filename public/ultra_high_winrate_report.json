@@ -1,0 +1,286 @@
+{
+  "bestConfig": {
+    "params": {
+      "bbDev": 2.2,
+      "rsiOversold": 30,
+      "rsiOverbought": 70,
+      "wickRatio": 0.9,
+      "tpMult": 1.1,
+      "slMult": 2,
+      "beMult": 0.6
+    },
+    "grandWins": 93,
+    "grandLosses": 18,
+    "grandT": 111,
+    "grandWR": 83.78378378378379,
+    "resultsByCoin": {
+      "SUIUSD": {
+        "wins": 14,
+        "losses": 3,
+        "wr": 82.35294117647058
+      },
+      "SOLUSD": {
+        "wins": 20,
+        "losses": 4,
+        "wr": 83.33333333333334
+      },
+      "DOGEUSD": {
+        "wins": 17,
+        "losses": 3,
+        "wr": 85
+      },
+      "AVAXUSD": {
+        "wins": 7,
+        "losses": 2,
+        "wr": 77.77777777777779
+      },
+      "ADAUSD": {
+        "wins": 11,
+        "losses": 1,
+        "wr": 91.66666666666666
+      },
+      "ETHUSD": {
+        "wins": 24,
+        "losses": 5,
+        "wr": 82.75862068965517
+      }
+    }
+  },
+  "top5": [
+    {
+      "params": {
+        "bbDev": 2.2,
+        "rsiOversold": 30,
+        "rsiOverbought": 70,
+        "wickRatio": 0.9,
+        "tpMult": 1.1,
+        "slMult": 2,
+        "beMult": 0.6
+      },
+      "grandWins": 93,
+      "grandLosses": 18,
+      "grandT": 111,
+      "grandWR": 83.78378378378379,
+      "resultsByCoin": {
+        "SUIUSD": {
+          "wins": 14,
+          "losses": 3,
+          "wr": 82.35294117647058
+        },
+        "SOLUSD": {
+          "wins": 20,
+          "losses": 4,
+          "wr": 83.33333333333334
+        },
+        "DOGEUSD": {
+          "wins": 17,
+          "losses": 3,
+          "wr": 85
+        },
+        "AVAXUSD": {
+          "wins": 7,
+          "losses": 2,
+          "wr": 77.77777777777779
+        },
+        "ADAUSD": {
+          "wins": 11,
+          "losses": 1,
+          "wr": 91.66666666666666
+        },
+        "ETHUSD": {
+          "wins": 24,
+          "losses": 5,
+          "wr": 82.75862068965517
+        }
+      }
+    },
+    {
+      "params": {
+        "bbDev": 2.2,
+        "rsiOversold": 30,
+        "rsiOverbought": 70,
+        "wickRatio": 0.9,
+        "tpMult": 1.3,
+        "slMult": 2,
+        "beMult": 0.6
+      },
+      "grandWins": 93,
+      "grandLosses": 18,
+      "grandT": 111,
+      "grandWR": 83.78378378378379,
+      "resultsByCoin": {
+        "SUIUSD": {
+          "wins": 14,
+          "losses": 3,
+          "wr": 82.35294117647058
+        },
+        "SOLUSD": {
+          "wins": 20,
+          "losses": 4,
+          "wr": 83.33333333333334
+        },
+        "DOGEUSD": {
+          "wins": 17,
+          "losses": 3,
+          "wr": 85
+        },
+        "AVAXUSD": {
+          "wins": 7,
+          "losses": 2,
+          "wr": 77.77777777777779
+        },
+        "ADAUSD": {
+          "wins": 11,
+          "losses": 1,
+          "wr": 91.66666666666666
+        },
+        "ETHUSD": {
+          "wins": 24,
+          "losses": 5,
+          "wr": 82.75862068965517
+        }
+      }
+    },
+    {
+      "params": {
+        "bbDev": 2.2,
+        "rsiOversold": 30,
+        "rsiOverbought": 70,
+        "wickRatio": 0.9,
+        "tpMult": 1.5,
+        "slMult": 2,
+        "beMult": 0.6
+      },
+      "grandWins": 93,
+      "grandLosses": 18,
+      "grandT": 111,
+      "grandWR": 83.78378378378379,
+      "resultsByCoin": {
+        "SUIUSD": {
+          "wins": 14,
+          "losses": 3,
+          "wr": 82.35294117647058
+        },
+        "SOLUSD": {
+          "wins": 20,
+          "losses": 4,
+          "wr": 83.33333333333334
+        },
+        "DOGEUSD": {
+          "wins": 17,
+          "losses": 3,
+          "wr": 85
+        },
+        "AVAXUSD": {
+          "wins": 7,
+          "losses": 2,
+          "wr": 77.77777777777779
+        },
+        "ADAUSD": {
+          "wins": 11,
+          "losses": 1,
+          "wr": 91.66666666666666
+        },
+        "ETHUSD": {
+          "wins": 24,
+          "losses": 5,
+          "wr": 82.75862068965517
+        }
+      }
+    },
+    {
+      "params": {
+        "bbDev": 2.2,
+        "rsiOversold": 30,
+        "rsiOverbought": 66,
+        "wickRatio": 0.9,
+        "tpMult": 1.1,
+        "slMult": 2,
+        "beMult": 0.6
+      },
+      "grandWins": 137,
+      "grandLosses": 27,
+      "grandT": 164,
+      "grandWR": 83.53658536585365,
+      "resultsByCoin": {
+        "SUIUSD": {
+          "wins": 20,
+          "losses": 3,
+          "wr": 86.95652173913044
+        },
+        "SOLUSD": {
+          "wins": 28,
+          "losses": 7,
+          "wr": 80
+        },
+        "DOGEUSD": {
+          "wins": 25,
+          "losses": 3,
+          "wr": 89.28571428571429
+        },
+        "AVAXUSD": {
+          "wins": 9,
+          "losses": 5,
+          "wr": 64.28571428571429
+        },
+        "ADAUSD": {
+          "wins": 19,
+          "losses": 2,
+          "wr": 90.47619047619048
+        },
+        "ETHUSD": {
+          "wins": 36,
+          "losses": 7,
+          "wr": 83.72093023255815
+        }
+      }
+    },
+    {
+      "params": {
+        "bbDev": 2.2,
+        "rsiOversold": 30,
+        "rsiOverbought": 66,
+        "wickRatio": 0.9,
+        "tpMult": 1.3,
+        "slMult": 2,
+        "beMult": 0.6
+      },
+      "grandWins": 137,
+      "grandLosses": 27,
+      "grandT": 164,
+      "grandWR": 83.53658536585365,
+      "resultsByCoin": {
+        "SUIUSD": {
+          "wins": 20,
+          "losses": 3,
+          "wr": 86.95652173913044
+        },
+        "SOLUSD": {
+          "wins": 28,
+          "losses": 7,
+          "wr": 80
+        },
+        "DOGEUSD": {
+          "wins": 25,
+          "losses": 3,
+          "wr": 89.28571428571429
+        },
+        "AVAXUSD": {
+          "wins": 9,
+          "losses": 5,
+          "wr": 64.28571428571429
+        },
+        "ADAUSD": {
+          "wins": 19,
+          "losses": 2,
+          "wr": 90.47619047619048
+        },
+        "ETHUSD": {
+          "wins": 36,
+          "losses": 7,
+          "wr": 83.72093023255815
+        }
+      }
+    }
+  ]
+}

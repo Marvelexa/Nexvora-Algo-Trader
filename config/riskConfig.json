@@ -1,11 +1,11 @@
 {
-  "maxLeverage": 20,
+  "maxLeverage": 25,
   "maxConcurrentPositions": 3,
   "marginPercentPerTrade": 30,
-  "maxDailyLossUSD": 10.0,
-  "maxLossPerTradeUSD": 2.5,
-  "targetProfitPerTradeUSD": 6.0,
-  "minCapitalFloorINR": 500,
-  "targetCapitalGoalINR": 4000,
+  "maxDailyLossUSD": 5.0,
+  "maxLossPerTradeUSD": 0.55,
+  "targetProfitPerTradeUSD": 1.0,
+  "minCapitalFloorINR": 50,
+  "targetCapitalGoalINR": 10000,
   "enforceHardRiskLimits": true
 }

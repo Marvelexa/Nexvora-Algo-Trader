@@ -1,0 +1,35 @@
+[
+  {
+    "symbol": "SUIUSD",
+    "setupName": "Donchian Momentum Expansion",
+    "totalTrades": 15,
+    "wins": 13,
+    "losses": 2,
+    "winRate": 86.7,
+    "netProfitUSD": 14.97,
+    "profitFactor": 3.61,
+    "description": "TP: 1.2x ATR | SL: 1.5x ATR | Param1: 25 | Param2: 1.2"
+  },
+  {
+    "symbol": "AVAXUSD",
+    "setupName": "Donchian Momentum Expansion",
+    "totalTrades": 10,
+    "wins": 8,
+    "losses": 2,
+    "winRate": 80,
+    "netProfitUSD": 7.43,
+    "profitFactor": 2.34,
+    "description": "TP: 1.2x ATR | SL: 1.5x ATR | Param1: 25 | Param2: 0.5"
+  },
+  {
+    "symbol": "ETHUSD",
+    "setupName": "Bollinger Band 2.2 SD Extreme Bounce",
+    "totalTrades": 10,
+    "wins": 8,
+    "losses": 2,
+    "winRate": 80,
+    "netProfitUSD": 8.92,
+    "profitFactor": 2.35,
+    "description": "TP: 1.2x ATR | SL: 1.2x ATR | Param1: 25 | Param2: 0.5"
+  }
+]

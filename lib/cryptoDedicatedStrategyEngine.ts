@@ -1918,7 +1918,7 @@ export class CryptoDedicatedStrategyEngine {
     const histConfirmsSell = currScaledHist <= prevScaledHist;
 
     const candleConfirmsBuy = !isInsideBar && (isInstBuyCandle || (lastBar.close > lastBar.open && currScaledHist > 0 && candleBody >= candleRange * 0.35)) && !isPostDumpTrap && !waterfallDumpBlocked;
-    const candleConfirmsSell = !isInsideBar && (isInstSellCandle || (lastBar.close < lastBar.open && currScaledHist <= 0 && candleBody >= candleRange * 0.30) || (upperWickPct >= 0.25)) && (!isPostPumpTrap || upperWickPct >= 0.25 || isInstSellCandle) && !waterfallPumpBlocked;
+    const candleConfirmsSell = !isInsideBar && (isInstSellCandle || lastBar.close < lastBar.open || (upperWickPct >= 0.20)) && (!isPostPumpTrap || upperWickPct >= 0.20 || isInstSellCandle || lastBar.close < lastBar.open) && !waterfallPumpBlocked;
 
     // 12. 6-Bar Extreme Oversold / Overbought Memory (< -36 or > +36)
     const waveSlice6 = scaledWave.slice(-6);
@@ -1948,8 +1948,8 @@ export class CryptoDedicatedStrategyEngine {
     const isWaveBullCross = isWaveBullCrossNow || isWaveBullCrossPrev;
     const isWaveBearCross = isWaveBearCrossNow || isWaveBearCrossPrev;
 
-    const allowBuyTrend = trendUp || wasDeepOversold;
-    const allowSellTrend = trendDown || wasDeepOverbought || upperWickPct >= 0.25 || isInstSellCandle || isZlemaBearCrossNow || isWaveBearCrossNow;
+    const allowBuyTrend = (trendUp || wasDeepOversold) && !trendDown;
+    const allowSellTrend = trendDown || wasDeepOverbought || upperWickPct >= 0.20 || isInstSellCandle || isZlemaBearCrossNow || isWaveBearCrossNow || lastBar.close < lastBar.open;
 
     let activeArmed: any = undefined;
     let armedBarsRemaining = 0;
@@ -1973,13 +1973,13 @@ export class CryptoDedicatedStrategyEngine {
       ? `Institutional Sell Bar (${Math.round((candleBody / candleRange) * 100)}% Body)`
       : 'Standard Bar';
 
-    const isBullishMomentum = currScaledWave > currScaledSig || lastFastZ > lastSlowZ;
-    const isBearishMomentum = currScaledWave < currScaledSig || lastFastZ < lastSlowZ;
+    const isBullishMomentum = (currScaledWave > currScaledSig || lastFastZ > lastSlowZ) && lastBar.close >= lastBar.open;
+    const isBearishMomentum = currScaledWave < currScaledSig || lastFastZ < lastSlowZ || lastBar.close < lastBar.open;
 
     // Strict fresh cross trigger — zero stale armed memory and no isolated candle body triggers
     const isFreshTriggerBuy = (isZlemaBullCrossNow || isWaveBullCrossNow || (isZlemaBullCrossPrev && isBullishMomentum)) && allowBuyTrend && !isPostDumpTrap;
-    const isFreshTriggerSell = (isZlemaBearCrossNow || isWaveBearCrossNow || (isZlemaBearCrossPrev && isBearishMomentum)) && allowSellTrend && (!isPostPumpTrap || isInstSellCandle || upperWickPct >= 0.25 || isZlemaBearCrossNow || isWaveBearCrossNow);
-    const isContinuationSell = trendDown && isBearishMomentum && candleConfirmsSell && (lastFastZ < lastSlowZ || currScaledWave < currScaledSig);
+    const isFreshTriggerSell = (isZlemaBearCrossNow || isWaveBearCrossNow || (isZlemaBearCrossPrev && isBearishMomentum)) && allowSellTrend && (!isPostPumpTrap || isInstSellCandle || upperWickPct >= 0.20 || isZlemaBearCrossNow || isWaveBearCrossNow);
+    const isContinuationSell = trendDown && isBearishMomentum && candleConfirmsSell;
 
     if (isChopMode) {
       signal = null;
@@ -2557,8 +2557,10 @@ export class CryptoDedicatedStrategyEngine {
         }
       }
     }
-    const isPostDumpTrap = hasRecentDump && !trendUp;
-    const isPostPumpTrap = hasRecentPump && !trendDown;
+    const rsi14Arr = CryptoDedicatedStrategyEngine.calculateRSI(closes, 14);
+    const currRsi = rsi14Arr[rsi14Arr.length - 1] || 50;
+    const isPostDumpTrap = hasRecentDump && !trendUp && currRsi > 35;
+    const isPostPumpTrap = hasRecentPump && !trendDown && currRsi < 65;
 
     // 8. Inside-Bar Rejection
     const isInsideBar = len >= 2 && (highs[len - 1] <= highs[len - 2]) && (lows[len - 1] >= lows[len - 2]);
@@ -2605,17 +2607,17 @@ export class CryptoDedicatedStrategyEngine {
     const isFreshBearTrigger = isZlemaBearCross || isWaveBearCross;
 
     // Master Trend Alignment Permission
-    const allowBuyTrend = trendUp || wasDeepOversold;
-    const allowSellTrend = trendDown || wasDeepOverbought || isFreshBearTrigger || (candleEval.isInstitutional && !candleEval.isBullish);
+    const allowBuyTrend = (trendUp || isFreshBullTrigger) && !isInsideBar;
+    const allowSellTrend = (trendDown || wasDeepOverbought || isFreshBearTrigger || lastCandle.close < lastCandle.open) && !isInsideBar;
 
-    const isBullishMomentum = currScaledWave > currScaledSig || lastFastZ > lastSlowZ;
-    const isBearishMomentum = currScaledWave < currScaledSig || lastFastZ < lastSlowZ;
+    const isBullishMomentum = (currScaledWave > currScaledSig || lastFastZ > lastSlowZ) && lastCandle.close >= lastCandle.open;
+    const isBearishMomentum = currScaledWave < currScaledSig || lastFastZ < lastSlowZ || lastCandle.close < lastCandle.open;
 
-    const candleConfirmsSell = (candleEval.isInstitutional && !candleEval.isBullish) || (lastCandle.close < lastCandle.open && (lastCandle.open - lastCandle.close) >= safeAtr * 0.35);
-    const candleConfirmsBuy = (candleEval.isInstitutional && candleEval.isBullish) || (lastCandle.close > lastCandle.open && (lastCandle.close - lastCandle.open) >= safeAtr * 0.35);
+    const candleConfirmsSell = lastCandle.close < lastCandle.open || (candleEval.isInstitutional && !candleEval.isBullish);
+    const candleConfirmsBuy = lastCandle.close > lastCandle.open || (candleEval.isInstitutional && candleEval.isBullish);
 
-    const canBuy = (isFreshBullTrigger || (isBullishMomentum && candleConfirmsBuy)) && !isInsideBar && allowBuyTrend;
-    const canSell = (isFreshBearTrigger || (isBearishMomentum && candleConfirmsSell)) && !isInsideBar && allowSellTrend;
+    const canBuy = (isFreshBullTrigger || (isBullishMomentum && candleConfirmsBuy)) && allowBuyTrend && !trendDown;
+    const canSell = (isFreshBearTrigger || (isBearishMomentum && candleConfirmsSell)) && allowSellTrend;
 
     let signal: 'BUY' | 'SELL' | null = null;
     let reason = '';
@@ -2629,8 +2631,18 @@ export class CryptoDedicatedStrategyEngine {
         ? `ZLEMA (8/21) Bear Cross (Fast $${lastFastZ.toFixed(2)} < Slow $${lastSlowZ.toFixed(2)})`
         : isWaveBearCross
         ? `Momentum Wave Bear Cross (Wave ${currScaledWave.toFixed(1)} < Signal ${currScaledSig.toFixed(1)})`
+        : lastCandle.close < lastCandle.open
+        ? `Bearish Red Candle Trend Impulse ($${lastCandle.close.toFixed(2)} < Open $${lastCandle.open.toFixed(2)})`
         : `Institutional Candle Pattern: ${candleEval.patternName}`;
       reason = `SOL Institutional A+ SELL [NEX-SOL-PRO]: ${trigger} | 100 EMA: $${trendEma.toFixed(2)}`;
+    } else if (canBuy && (isFreshBullTrigger || trendUp)) {
+      signal = 'BUY';
+      const trigger = isZlemaBullCross
+        ? `ZLEMA (8/21) Bull Cross (Fast $${lastFastZ.toFixed(2)} > Slow $${lastSlowZ.toFixed(2)})`
+        : isWaveBullCross
+        ? `Momentum Wave Bull Cross (Wave ${currScaledWave.toFixed(1)} > Signal ${currScaledSig.toFixed(1)})`
+        : `Institutional Candle Pattern: ${candleEval.patternName}`;
+      reason = `SOL Institutional A+ BUY [NEX-SOL-PRO]: ${trigger} | 100 EMA: $${trendEma.toFixed(2)}`;
     } else if (canBuy) {
       signal = 'BUY';
       const trigger = isZlemaBullCross

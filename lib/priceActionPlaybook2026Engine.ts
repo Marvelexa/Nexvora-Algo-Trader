@@ -496,13 +496,13 @@ export class PriceActionPlaybook2026Engine {
       const isBullPinBar = lastBar.lowerWick >= 1.8 * lastBar.body &&
                            lastBar.lowerWick >= 0.45 * lastBar.range &&
                            lastBar.closePos >= 0.50 &&
-                           (isAtSupport || isMacroUptrend);
+                           isAtSupport;
 
       // Bearish Pin Bar at Resistance
       const isBearPinBar = lastBar.upperWick >= 1.8 * lastBar.body &&
                            lastBar.upperWick >= 0.45 * lastBar.range &&
                            lastBar.closePos <= 0.50 &&
-                           (isAtResistance || isMacroDowntrend) &&
+                           isAtResistance &&
                            structureData.structure !== 'UPTREND';
 
       if (isBullPinBar && structureData.structure !== 'DOWNTREND') {
