@@ -150,59 +150,69 @@ export class QuantMathematicalEngine {
     return { fisher, signal };
   }
 
+  private static rescaledRange(seg: number[]): number {
+    const n = seg.length;
+    const mean = seg.reduce((a, b) => a + b, 0) / n;
+    let cum = 0, minC = 0, maxC = 0, ss = 0;
+    for (const v of seg) {
+      const d = v - mean;
+      cum += d;
+      if (cum < minC) minC = cum;
+      if (cum > maxC) maxC = cum;
+      ss += d * d;
+    }
+    const sd = Math.sqrt(ss / n);
+    return sd > 0 ? (maxC - minC) / sd : 0;
+  }
+
+  // Pre-calculated Monte Carlo noise baseline (trials = 5000 on i.i.d Gaussian noise)
+  // For R/S analysis, empirical noise expectation E[R/S] at lag n:
+  // lag 8: ~2.632, lag 16: ~4.022, lag 24: ~5.105, lag 32: ~6.025, lag 64: ~8.974
+  private static readonly NOISE_RS_BASELINE: Record<number, number> = {
+    8: 2.632,
+    16: 4.022,
+    24: 5.105,
+    32: 6.025,
+    64: 8.974,
+  };
+
   /**
-   * 3. Hurst Exponent (Rescaled Range Analysis - R/S)
-   * Discovered by Harold Edwin Hurst.
+   * 3. Hurst Exponent (Rescaled Range Analysis - R/S with Noise Baseline Correction)
+   * Corrected for small-sample upward bias so pure random noise centers at H ~ 0.50.
    * - H > 0.55: Persistent / Trending market (momentum continuation)
    * - H < 0.45: Anti-Persistent / Mean-reverting market (mean reversion bounces)
    * - 0.45 <= H <= 0.55: Brownian Random Walk
    */
-  public static calculateHurstExponent(closes: number[], maxLag: number = 32): number {
+  public static calculateHurstExponent(closes: number[], maxLag: number = 64): number {
     const n = closes.length;
-    if (n < maxLag * 2) return 0.50;
+    if (n < 64) return 0.50;
 
     const logReturns: number[] = [];
     for (let i = 1; i < n; i++) {
-      logReturns.push(Math.log(closes[i] / closes[i - 1]));
+      logReturns.push(Math.log(closes[i] / (closes[i - 1] || 1)));
     }
 
-    const lagSizes = [8, 16, 24, 32];
+    const lagSizes = [8, 16, 32, 64];
     const logLags: number[] = [];
-    const logRS: number[] = [];
+    const logDeltaRS: number[] = [];
 
     for (const lag of lagSizes) {
       if (logReturns.length < lag) continue;
       const numSegments = Math.floor(logReturns.length / lag);
+      if (numSegments < 2) continue;
       let totalRS = 0;
 
       for (let s = 0; s < numSegments; s++) {
         const segment = logReturns.slice(s * lag, (s + 1) * lag);
-        const mean = segment.reduce((a, b) => a + b, 0) / lag;
-        
-        let cumDev = 0;
-        let minDev = 0;
-        let maxDev = 0;
-        let sumSqDiff = 0;
-
-        for (const val of segment) {
-          const diff = val - mean;
-          cumDev += diff;
-          if (cumDev < minDev) minDev = cumDev;
-          if (cumDev > maxDev) maxDev = cumDev;
-          sumSqDiff += diff * diff;
-        }
-
-        const range = maxDev - minDev;
-        const stdDev = Math.sqrt(sumSqDiff / lag);
-        if (stdDev > 0) {
-          totalRS += (range / stdDev);
-        }
+        totalRS += this.rescaledRange(segment);
       }
 
-      const avgRS = totalRS / (numSegments || 1);
-      if (avgRS > 0) {
+      const avgRS = totalRS / numSegments;
+      const noiseRS = this.NOISE_RS_BASELINE[lag] || Math.sqrt(Math.PI * lag / 2);
+      if (avgRS > 0 && noiseRS > 0) {
         logLags.push(Math.log(lag));
-        logRS.push(Math.log(avgRS));
+        // Baseline correction: Subtract expected random walk log(RS)
+        logDeltaRS.push(Math.log(avgRS) - Math.log(noiseRS));
       }
     }
 
@@ -210,16 +220,17 @@ export class QuantMathematicalEngine {
 
     const nPts = logLags.length;
     const meanX = logLags.reduce((a, b) => a + b, 0) / nPts;
-    const meanY = logRS.reduce((a, b) => a + b, 0) / nPts;
+    const meanY = logDeltaRS.reduce((a, b) => a + b, 0) / nPts;
 
     let num = 0;
     let den = 0;
     for (let i = 0; i < nPts; i++) {
-      num += (logLags[i] - meanX) * (logRS[i] - meanY);
+      num += (logLags[i] - meanX) * (logDeltaRS[i] - meanY);
       den += (logLags[i] - meanX) * (logLags[i] - meanX);
     }
 
-    const hurst = den > 0 ? num / den : 0.50;
+    const slope = den > 0 ? num / den : 0;
+    const hurst = 0.50 + slope;
     return Math.max(0.05, Math.min(0.95, parseFloat(hurst.toFixed(3))));
   }
 
@@ -299,12 +310,16 @@ export class QuantMathematicalEngine {
   }
 
   /**
-   * 7. Kalman 1D Optimal State Filter
-   * Recursive Bayesian optimal state estimator.
+   * 7. Adaptive Kalman Optimal State Estimator
+   * Recursively estimates true market fair-value by dynamically modulating Process Noise (Q)
+   * relative to Measurement Noise (R) based on price displacement velocity:
+   * - During explosive trend/breakout: Q expands -> Kalman Gain K increases (~0.50-0.75), tracking price with near-zero lag.
+   * - During consolidating range/chop: Q contracts -> Kalman Gain K reduces (~0.12-0.18), delivering heavy noise filtering.
    */
-  public static calculateKalmanFilter(closes: number[], qProcessNoise: number = 0.01, rMeasurementNoise: number = 0.1): number[] {
+  public static calculateKalmanFilter(closes: number[], baseQ: number = 0.01, baseR: number = 0.05): number[] {
     const n = closes.length;
     if (n === 0) return [];
+    if (n < 3) return [...closes];
 
     const filtered: number[] = new Array(n);
     let xHat = closes[0];
@@ -312,8 +327,13 @@ export class QuantMathematicalEngine {
     filtered[0] = xHat;
 
     for (let i = 1; i < n; i++) {
-      const pPred = pCov + qProcessNoise;
-      const kGain = pPred / (pPred + rMeasurementNoise);
+      // Dynamic process noise based on price deviation from current state estimate
+      const dev = Math.abs(closes[i] - xHat) / (xHat || 1);
+      const qAdaptive = Math.max(0.002, Math.min(0.20, dev * 2.0));
+      const rMeasurement = baseR || 0.05;
+
+      const pPred = pCov + qAdaptive;
+      const kGain = pPred / (pPred + rMeasurement);
       xHat = xHat + kGain * (closes[i] - xHat);
       pCov = (1 - kGain) * pPred;
       filtered[i] = xHat;
@@ -642,22 +662,24 @@ export class QuantMathematicalEngine {
     // SuperSmoother
     const smooth = this.calculateSuperSmoother(closes, 10);
     const sLen = smooth.length;
-    const currentSmooth = smooth[sLen - 1];
-    const prevSmooth = smooth[sLen - 2];
-    const superSmootherSlope = ((currentSmooth - prevSmooth) / (prevSmooth || 1)) * 100;
+    const currentSmooth = sLen > 0 ? smooth[sLen - 1] : (closes[closes.length - 1] || 0);
+    const prevSmooth = sLen > 1 ? smooth[sLen - 2] : currentSmooth;
+    const superSmootherSlope = (prevSmooth && !isNaN(prevSmooth) && prevSmooth !== 0)
+      ? ((currentSmooth - prevSmooth) / prevSmooth) * 100
+      : 0;
 
-    // Fisher Transform
+    // Fisher Transform (cross verified from extreme levels)
     const { fisher, signal: fishSig } = this.calculateFisherTransform(candles, 10);
     const fLen = fisher.length;
     const currentFisher = fLen > 0 ? fisher[fLen - 1] : 0;
     const currentFishSig = fLen > 0 ? fishSig[fLen - 1] : 0;
     const prevFisher = fLen > 1 ? fisher[fLen - 2] : 0;
     const prevFishSig = fLen > 1 ? fishSig[fLen - 2] : 0;
-    const isFisherBullishCross = prevFisher <= prevFishSig && currentFisher > currentFishSig;
-    const isFisherBearishCross = prevFisher >= prevFishSig && currentFisher < currentFishSig;
+    const isFisherBullishCross = prevFisher <= prevFishSig && currentFisher > currentFishSig && (prevFisher <= -0.70 || currentFisher <= -0.40);
+    const isFisherBearishCross = prevFisher >= prevFishSig && currentFisher < currentFishSig && (prevFisher >= 0.70 || currentFisher >= 0.40);
 
-    // Kalman Filter
-    const kalmanArr = this.calculateKalmanFilter(closes, 0.01, 0.1);
+    // Adaptive Kalman Filter
+    const kalmanArr = this.calculateKalmanFilter(closes);
     const kalmanEstimate = kalmanArr[kalmanArr.length - 1] || currentPrice;
     const kalmanDeviationPct = ((currentPrice - kalmanEstimate) / (kalmanEstimate || 1)) * 100;
     const kalmanNormalizedDev = (currentPrice - kalmanEstimate) / (atr || 1);
@@ -1002,25 +1024,33 @@ export class QuantMathematicalEngine {
     let totalSellScore = sellA + sellB + sellC + sellD + sellE + sellF;
 
     // Macro Trend & Market Structure Steering (Playbook 2026: Trade With The Trend!)
-    // In DOWNTREND / Macro Bearish (Price < EMA50 or LH/LL):
-    // 1. Never catch falling knives! Cap totalBuyScore <= 25 so it NEVER triggers a counter-trend long!
-    // 2. Trend-following shorts: Add +15 to totalSellScore when price is below EMA50!
-    if (isMacroBearish || currentPrice < sr.ema50) {
-      totalBuyScore = Math.min(totalBuyScore, 25);
-      if (currentPrice < sr.ema50) {
-        totalSellScore = Math.min(99, totalSellScore + 15);
-        reasons.push('Macro Downtrend Steering: Trend follows EMA50 (Capped Buy <= 25, +15 Sell Score)');
+    // 1. In TREND regime: Enforce strict directional trend-following (block counter-trend catching falling knives or shorting breakouts).
+    // 2. In RANGE regime: Allow mean-reversion in BOTH directions (support floor bounce BUY and resistance ceiling reject SELL).
+    if (marketRegime === 'TREND') {
+      if (isMacroBearish || currentPrice < sr.ema50) {
+        totalBuyScore = Math.min(totalBuyScore, 25);
+        if (currentPrice < sr.ema50) {
+          totalSellScore = Math.min(99, totalSellScore + 15);
+          reasons.push('Macro Downtrend Steering: Trend follows EMA50 (Capped Buy <= 25, +15 Sell Score)');
+        }
+      } else if (isMacroBullish || currentPrice > sr.ema50) {
+        totalSellScore = Math.min(totalSellScore, 25);
+        if (currentPrice > sr.ema50) {
+          totalBuyScore = Math.min(99, totalBuyScore + 15);
+          reasons.push('Macro Uptrend Steering: Trend follows EMA50 (Capped Sell <= 25, +15 Buy Score)');
+        }
       }
-    } else if (isMacroBullish || currentPrice > sr.ema50) {
-      // In UPTREND / Macro Bullish (Price > EMA50 or HH/HL):
-      // 1. Never short bull breakouts! Cap totalSellScore <= 25 so it NEVER triggers a counter-trend short!
-      // 2. Trend-following longs: Add +15 to totalBuyScore when price is above EMA50!
-      totalSellScore = Math.min(totalSellScore, 25);
-      if (currentPrice > sr.ema50) {
-        totalBuyScore = Math.min(99, totalBuyScore + 15);
-        reasons.push('Macro Uptrend Steering: Trend follows EMA50 (Capped Sell <= 25, +15 Buy Score)');
+    } else if (marketRegime === 'RANGE') {
+      if (sr.supportBounceConfirmed || (sr.isAtSupport && !sr.supportBreakConfirmed)) {
+        reasons.push(`Range Floor Bounce Setup active at $${sr.nearestSupport}`);
+      }
+      if (sr.resistanceRejectConfirmed || (sr.isAtResistance && !sr.resistanceBreakConfirmed)) {
+        reasons.push(`Range Ceiling Rejection Setup active at $${sr.nearestResistance}`);
       }
     }
+
+    totalBuyScore = Math.min(99, Math.max(0, totalBuyScore));
+    totalSellScore = Math.min(99, Math.max(0, totalSellScore));
 
     let recommendedSide: 'BUY' | 'SELL' | null = null;
     let finalScore = 50;

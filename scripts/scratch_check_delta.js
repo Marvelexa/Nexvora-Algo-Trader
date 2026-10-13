@@ -1,8 +1,8 @@
 const crypto = require('crypto');
 const https = require('https');
 
-const apiKey = 'WO7A6F1ikCOqYX3RcjBLJSU8XTQZBc';
-const apiSecret = 'U3khyH5CA0sELi3nksyYZ6Dn6WuINMg4c8fXM0OkBxxc2GfB3ettiCFg0teo';
+const apiKey = process.env.DELTA_API_KEY || '';
+const apiSecret = process.env.DELTA_API_SECRET || '';
 const isTestnet = true; // Delta India testnet
 const host = isTestnet ? 'cdn-ind.testnet.deltaex.org' : 'api.india.delta.exchange';
 

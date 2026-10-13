@@ -29,8 +29,8 @@ export const CredentialsModal: React.FC<CredentialsModalProps> = ({
   onUpdateCredentials,
   onTestConnection,
 }) => {
-  const [apiKey, setApiKey] = useState('WO7A6F1ikCOqYX3RcjBLJSU8XTQZBc');
-  const [apiSecret, setApiSecret] = useState('U3khyH5CA0sELi3nksyYZ6Dn6WuINMg4c8fXM0OkBxxc2GfB3ettiCFg0teo');
+  const [apiKey, setApiKey] = useState('');
+  const [apiSecret, setApiSecret] = useState('');
   const [isSimulation, setIsSimulation] = useState(status?.isSimulation ?? true);
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ connected: boolean; status: string; error?: string } | null>(null);
