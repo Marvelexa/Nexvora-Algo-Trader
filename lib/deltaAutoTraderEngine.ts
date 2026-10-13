@@ -783,28 +783,31 @@ export class DeltaAutoTraderEngine {
 
     // Macro Structure Alignment & Asymmetry:
     // "Uptrend (HH/HL): Look for LONGS only. Downtrend (LH/LL): Look for SHORTS only."
-    if (currentStructure === 'DOWNTREND') {
-      if (mathSide === 'BUY') {
-        console.log(`🛡️ [STRUCTURE SHIELD] ${cleanSym} BUY blocked: Market Structure is DOWNTREND (LH/LL). Absolute rule: NEVER BUY IN DOWNTREND!`);
-        // In Downtrend, check if Quant Math or Dedicated Indicator supports a SELL/SHORT setup
-        if (mathVerdict.scores && (mathVerdict.scores.totalSellScore >= 35 || indicatorSide === 'SELL')) {
-          mathSide = 'SELL';
-          mathScore = Math.max(mathVerdict.scores.totalSellScore, 45);
-          console.log(`🔄 [STRUCTURE STEERING] ${cleanSym} Synthesized SELL setup aligned with DOWNTREND (Score: ${mathScore})`);
-        } else {
-          isMathBlockedByStructure = true;
+    // Bypassed in Inverse Mode (since raw signal is inverted to match trend) and when Quant Math has high conviction (score >= 60).
+    if (!this.state.isInverseTrading && mathScore < 60) {
+      if (currentStructure === 'DOWNTREND') {
+        if (mathSide === 'BUY') {
+          console.log(`🛡️ [STRUCTURE SHIELD] ${cleanSym} BUY blocked: Market Structure is DOWNTREND (LH/LL). Absolute rule: NEVER BUY IN DOWNTREND!`);
+          // In Downtrend, check if Quant Math or Dedicated Indicator supports a SELL/SHORT setup
+          if (mathVerdict.scores && (mathVerdict.scores.totalSellScore >= 35 || indicatorSide === 'SELL')) {
+            mathSide = 'SELL';
+            mathScore = Math.max(mathVerdict.scores.totalSellScore, 45);
+            console.log(`🔄 [STRUCTURE STEERING] ${cleanSym} Synthesized SELL setup aligned with DOWNTREND (Score: ${mathScore})`);
+          } else {
+            isMathBlockedByStructure = true;
+          }
         }
-      }
-    } else if (currentStructure === 'UPTREND') {
-      if (mathSide === 'SELL') {
-        console.log(`🛡️ [STRUCTURE SHIELD] ${cleanSym} SELL blocked: Market Structure is UPTREND (HH/HL). Absolute rule: NEVER SHORT IN UPTREND!`);
-        // In Uptrend, check if Quant Math or Dedicated Indicator supports a BUY/LONG setup
-        if (mathVerdict.scores && (mathVerdict.scores.totalBuyScore >= 35 || indicatorSide === 'BUY')) {
-          mathSide = 'BUY';
-          mathScore = Math.max(mathVerdict.scores.totalBuyScore, 45);
-          console.log(`🔄 [STRUCTURE STEERING] ${cleanSym} Synthesized BUY setup aligned with UPTREND (Score: ${mathScore})`);
-        } else {
-          isMathBlockedByStructure = true;
+      } else if (currentStructure === 'UPTREND') {
+        if (mathSide === 'SELL') {
+          console.log(`🛡️ [STRUCTURE SHIELD] ${cleanSym} SELL blocked: Market Structure is UPTREND (HH/HL). Absolute rule: NEVER SHORT IN UPTREND!`);
+          // In Uptrend, check if Quant Math or Dedicated Indicator supports a BUY/LONG setup
+          if (mathVerdict.scores && (mathVerdict.scores.totalBuyScore >= 35 || indicatorSide === 'BUY')) {
+            mathSide = 'BUY';
+            mathScore = Math.max(mathVerdict.scores.totalBuyScore, 45);
+            console.log(`🔄 [STRUCTURE STEERING] ${cleanSym} Synthesized BUY setup aligned with UPTREND (Score: ${mathScore})`);
+          } else {
+            isMathBlockedByStructure = true;
+          }
         }
       }
     }
@@ -859,32 +862,34 @@ export class DeltaAutoTraderEngine {
       // Determine active BUY signal stance (strictly dedicated indicator):
       const hasActiveBuySignal = indicatorSide === 'BUY';
 
-      // 1. ABSOLUTE MACRO TREND & CONFLUENCE VETO (Zero Counter-Trend Guesswork)
-      if (mathSide === 'BUY') {
-        if (hasActiveSellSignal) {
-          console.log(`🛡️ [CONFLUENCE VETO] ${cleanSym} BUY blocked: Dedicated Indicator is SELL. Never buy when Sell signal is active!`);
-          return null;
+      if (!this.state.isInverseTrading) {
+        // 1. ABSOLUTE MACRO TREND & CONFLUENCE VETO (Zero Counter-Trend Guesswork)
+        if (mathSide === 'BUY') {
+          if (hasActiveSellSignal) {
+            console.log(`🛡️ [CONFLUENCE VETO] ${cleanSym} BUY blocked: Dedicated Indicator is SELL. Never buy when Sell signal is active!`);
+            return null;
+          }
+
+          // ABSOLUTE MACRO TREND FILTER: Price below EMA50 or Macro Trend Bearish NEVER BUYS!
+          const isMacroTrendBearish = confluence.trendDirection === 'BEARISH' || confluence.isMacroBearish || lastBarPrice < confluence.ema50;
+          if (isMacroTrendBearish) {
+            console.log(`🛡️ [CONFLUENCE VETO] ${cleanSym} BUY blocked: Macro Trend is BEARISH (Trend=${confluence.trendDirection}, P=$${lastBarPrice.toFixed(4)} < EMA50=$${confluence.ema50.toFixed(4)}). Zero counter-trend guesswork!`);
+            return null;
+          }
         }
 
-        // ABSOLUTE MACRO TREND FILTER: Price below EMA50 or Macro Trend Bearish NEVER BUYS!
-        const isMacroTrendBearish = confluence.trendDirection === 'BEARISH' || confluence.isMacroBearish || lastBarPrice < confluence.ema50;
-        if (isMacroTrendBearish) {
-          console.log(`🛡️ [CONFLUENCE VETO] ${cleanSym} BUY blocked: Macro Trend is BEARISH (Trend=${confluence.trendDirection}, P=$${lastBarPrice.toFixed(4)} < EMA50=$${confluence.ema50.toFixed(4)}). Zero counter-trend guesswork!`);
-          return null;
-        }
-      }
+        if (mathSide === 'SELL') {
+          if (hasActiveBuySignal) {
+            console.log(`🛡️ [CONFLUENCE VETO] ${cleanSym} SELL blocked: Dedicated Indicator is BUY. Never short when Buy signal is active!`);
+            return null;
+          }
 
-      if (mathSide === 'SELL') {
-        if (hasActiveBuySignal) {
-          console.log(`🛡️ [CONFLUENCE VETO] ${cleanSym} SELL blocked: Dedicated Indicator is BUY. Never short when Buy signal is active!`);
-          return null;
-        }
-
-        // ABSOLUTE MACRO TREND FILTER: Price above EMA50 or Macro Trend Bullish NEVER SHORTS!
-        const isMacroTrendBullish = confluence.trendDirection === 'BULLISH' || confluence.isMacroBullish || lastBarPrice > confluence.ema50;
-        if (isMacroTrendBullish) {
-          console.log(`🛡️ [CONFLUENCE VETO] ${cleanSym} SELL blocked: Macro Trend is BULLISH (Trend=${confluence.trendDirection}, P=$${lastBarPrice.toFixed(4)} > EMA50=$${confluence.ema50.toFixed(4)}). Zero counter-trend guesswork!`);
-          return null;
+          // ABSOLUTE MACRO TREND FILTER: Price above EMA50 or Macro Trend Bullish NEVER SHORTS!
+          const isMacroTrendBullish = confluence.trendDirection === 'BULLISH' || confluence.isMacroBullish || lastBarPrice > confluence.ema50;
+          if (isMacroTrendBullish) {
+            console.log(`🛡️ [CONFLUENCE VETO] ${cleanSym} SELL blocked: Macro Trend is BULLISH (Trend=${confluence.trendDirection}, P=$${lastBarPrice.toFixed(4)} > EMA50=$${confluence.ema50.toFixed(4)}). Zero counter-trend guesswork!`);
+            return null;
+          }
         }
       }
 
@@ -905,48 +910,47 @@ export class DeltaAutoTraderEngine {
         candleTriggerTag = ` + PA ${paVerdict.setupType}`;
       }
 
-      // Symmetric Trap Protection:
-      // 1. Do NOT BUY into Overbought Climax (RSI >= 70, Fisher >= 1.5, Z >= 1.6, or testing Resistance)
-      // 2. Do NOT SELL into Oversold Capitulation (RSI <= 30, Fisher <= -1.5, Z <= -1.6, or testing Support)
-      const currentRsi = rsi15mArr[rsi15mArr.length - 1] || 50;
+      // Symmetric Trap Protection (direct mode only):
+      if (!this.state.isInverseTrading) {
+        const currentRsi = rsi15mArr[rsi15mArr.length - 1] || 50;
 
-      if (mathSide === 'BUY') {
-        const isRsiOverbought = currentRsi >= 82;
-        const isGaussianOverbought = (mathVerdict.zScore && mathVerdict.zScore >= 3.5) && (mathVerdict.fisherTransform && mathVerdict.fisherTransform >= 2.2);
-        const isBlockedByCeiling = (mathVerdict.isAtResistance && mathVerdict.resistanceRejectConfirmed) ||
-          Boolean(paVerdict && paVerdict.locationReason?.includes('Resistance') && paVerdict.confluenceScore >= 85);
+        if (mathSide === 'BUY') {
+          const isRsiOverbought = currentRsi >= 82;
+          const isGaussianOverbought = (mathVerdict.zScore && mathVerdict.zScore >= 3.5) && (mathVerdict.fisherTransform && mathVerdict.fisherTransform >= 2.2);
+          const isBlockedByCeiling = (mathVerdict.isAtResistance && mathVerdict.resistanceRejectConfirmed) ||
+            Boolean(paVerdict && paVerdict.locationReason?.includes('Resistance') && paVerdict.confluenceScore >= 85);
 
-        if (isRsiOverbought || isGaussianOverbought) {
-          console.log(`🛡️ [OVERBOUGHT TRAP SHIELD] ${cleanSym} BUY blocked: Market is Overbought/Exhausted (RSI=${currentRsi.toFixed(1)}, Z=${mathVerdict.zScore}, Fisher=${mathVerdict.fisherTransform}). Never buy at blow-off top!`);
+          if (isRsiOverbought || isGaussianOverbought) {
+            console.log(`🛡️ [OVERBOUGHT TRAP SHIELD] ${cleanSym} BUY blocked: Market is Overbought/Exhausted (RSI=${currentRsi.toFixed(1)}, Z=${mathVerdict.zScore}, Fisher=${mathVerdict.fisherTransform}). Never buy at blow-off top!`);
+            return null;
+          }
+          if (isBlockedByCeiling) {
+            console.log(`🛡️ [TRAP SHIELD] ${cleanSym} BUY dropped: Price is testing/rejecting at Resistance Ceiling ($${mathVerdict.nearestResistance || 'Resistance'}).`);
+            return null;
+          }
+        }
+
+        if (mathSide === 'SELL') {
+          const isRsiOversold = currentRsi <= 18;
+          const isGaussianOversold = (mathVerdict.zScore && mathVerdict.zScore <= -3.5) && (mathVerdict.fisherTransform && mathVerdict.fisherTransform <= -2.2);
+          const isBlockedByFloor = (mathVerdict.isAtSupport && mathVerdict.supportBounceConfirmed) ||
+            Boolean(paVerdict && paVerdict.locationReason?.includes('Support') && paVerdict.confluenceScore >= 85);
+
+          if (isRsiOversold || isGaussianOversold) {
+            console.log(`🛡️ [OVERSOLD TRAP SHIELD] ${cleanSym} SELL blocked: Market is Oversold/Dumped (RSI=${currentRsi.toFixed(1)}, Z=${mathVerdict.zScore}, Fisher=${mathVerdict.fisherTransform}). Never sell at capitulation bottom!`);
+            return null;
+          }
+          if (isBlockedByFloor) {
+            console.log(`🛡️ [TRAP SHIELD] ${cleanSym} SELL dropped: Price is testing/bouncing at Support Floor ($${mathVerdict.nearestSupport || 'Support'}).`);
+            return null;
+          }
+        }
+
+        // Reject any trade where technical indicators do not confirm the direction
+        if (!isIndicatorAligned) {
+          console.log(`🛡️ [INDICATOR UNCONFIRMED] ${cleanSym} ${mathSide} blocked: Technical indicators do not support ${mathSide}. Standing aside.`);
           return null;
         }
-        if (isBlockedByCeiling) {
-          console.log(`🛡️ [TRAP SHIELD] ${cleanSym} BUY dropped: Price is testing/rejecting at Resistance Ceiling ($${mathVerdict.nearestResistance || 'Resistance'}).`);
-          return null;
-        }
-      }
-
-      if (mathSide === 'SELL') {
-        const isRsiOversold = currentRsi <= 18;
-        const isGaussianOversold = (mathVerdict.zScore && mathVerdict.zScore <= -3.5) && (mathVerdict.fisherTransform && mathVerdict.fisherTransform <= -2.2);
-        const isBlockedByFloor = (mathVerdict.isAtSupport && mathVerdict.supportBounceConfirmed) ||
-          Boolean(paVerdict && paVerdict.locationReason?.includes('Support') && paVerdict.confluenceScore >= 85);
-
-        if (isRsiOversold || isGaussianOversold) {
-          console.log(`🛡️ [OVERSOLD TRAP SHIELD] ${cleanSym} SELL blocked: Market is Oversold/Dumped (RSI=${currentRsi.toFixed(1)}, Z=${mathVerdict.zScore}, Fisher=${mathVerdict.fisherTransform}). Never sell at capitulation bottom!`);
-          return null;
-        }
-        if (isBlockedByFloor) {
-          console.log(`🛡️ [TRAP SHIELD] ${cleanSym} SELL dropped: Price is testing/bouncing at Support Floor ($${mathVerdict.nearestSupport || 'Support'}).`);
-          return null;
-        }
-      }
-
-      // 3. Synthesize Multi-Layer Strict Confluence Score
-      // Reject any trade where technical indicators do not confirm the direction
-      if (!isIndicatorAligned) {
-        console.log(`🛡️ [INDICATOR UNCONFIRMED] ${cleanSym} ${mathSide} blocked: Technical indicators do not support ${mathSide}. Standing aside.`);
-        return null;
       }
 
       let strictScore = mathScore;
@@ -1734,8 +1738,8 @@ export class DeltaAutoTraderEngine {
             shadowConfirmedSeconds: 0,
             executionMode,
             reversalReason: undefined,
-            customTP: candidate.multiSignal?.customTP,
-            customSL: candidate.multiSignal?.customSL,
+            customTP: this.state.isInverseTrading ? undefined : candidate.multiSignal?.customTP,
+            customSL: this.state.isInverseTrading ? undefined : candidate.multiSignal?.customSL,
           });
 
           if (newPos) {
@@ -1916,13 +1920,15 @@ export class DeltaAutoTraderEngine {
       const liveCandlesGuard = await this.fetchCandles(params.symbol, '15m', 10);
       if (liveCandlesGuard && liveCandlesGuard.length > 0) {
         const activeBar = liveCandlesGuard[liveCandlesGuard.length - 1];
-        if (orderSide === 'BUY' && params.signalPrice < activeBar.open) {
-          console.warn(`🛡️ [CANDLE COLOR VETO] ${cleanSym} BUY blocked: Active forming 15M bar is RED ($${params.signalPrice.toFixed(4)} < Open $${activeBar.open.toFixed(4)}). Never buy a dumping candle!`);
-          return null;
-        }
-        if (orderSide === 'SELL' && params.signalPrice > activeBar.open) {
-          console.warn(`🛡️ [CANDLE COLOR VETO] ${cleanSym} SELL blocked: Active forming 15M bar is GREEN ($${params.signalPrice.toFixed(4)} > Open $${activeBar.open.toFixed(4)}). Never short a pumping candle!`);
-          return null;
+        if (!this.state.isInverseTrading) {
+          if (orderSide === 'BUY' && params.signalPrice < activeBar.open) {
+            console.warn(`🛡️ [CANDLE COLOR VETO] ${cleanSym} BUY blocked: Active forming 15M bar is RED ($${params.signalPrice.toFixed(4)} < Open $${activeBar.open.toFixed(4)}). Never buy a dumping candle!`);
+            return null;
+          }
+          if (orderSide === 'SELL' && params.signalPrice > activeBar.open) {
+            console.warn(`🛡️ [CANDLE COLOR VETO] ${cleanSym} SELL blocked: Active forming 15M bar is GREEN ($${params.signalPrice.toFixed(4)} > Open $${activeBar.open.toFixed(4)}). Never short a pumping candle!`);
+            return null;
+          }
         }
       }
     } catch (e) {}
