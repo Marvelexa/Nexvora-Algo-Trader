@@ -361,8 +361,17 @@ export class DeltaExchangeEngine {
           if (strippedBody.take_profit_order) delete strippedBody.take_profit_order.parent_type;
           res = await this.request('POST', path, {}, strippedBody);
         } else if (errMsg.includes('bracket_order_exists') || errMsg.includes('bracket_order_position_exists')) {
-          console.log(`[DeltaExchange] ℹ️ Bracket order already active and confirmed on ${symUpper}. Preserving existing bracket.`);
-          return { success: true, message: 'Bracket already active on exchange' };
+          console.log(`[DeltaExchange] 🔄 Bracket order exists on ${symUpper}. Canceling old bracket and applying updated Breakeven/SL...`);
+          await this.cancelBracketOrder(symUpper);
+          await new Promise(r => setTimeout(r, 200));
+          try {
+            res = await this.request('POST', path, {}, bodyData);
+            console.log(`🎯 [DeltaExchange] Successfully updated bracket on ${symUpper}: SL=$${stopLossPrice}, TP=$${takeProfitPrice}`);
+            return { success: true, result: res?.result || res };
+          } catch (retryErr: any) {
+            console.warn(`[DeltaExchange] Retry bracket update note on ${symUpper}:`, retryErr?.message || retryErr);
+            return { success: false, error: retryErr?.message };
+          }
         } else {
           throw err;
         }
@@ -397,16 +406,20 @@ export class DeltaExchangeEngine {
         bodyData.product_id = product.id;
       }
       const res = await this.request('DELETE', '/v2/orders/all', {}, bodyData);
-      console.log(`[DeltaExchange] 🛑 Cancelled existing bracket/stop orders for ${symUpper}`);
+      console.log(`[DeltaExchange] 🛑 Cancelled existing bracket/stop orders for ${symUpper}`, res?.result || res);
       return res;
     } catch (e: any) {
+      console.warn(`[DeltaExchange] Note on canceling bracket for ${symbol}:`, e.message);
       return { success: false, error: e.message };
     }
   }
 
   public async updateBracketOrder(symbol: string, stopLossPrice?: number, takeProfitPrice?: number): Promise<any> {
-    await this.cancelBracketOrder(symbol);
-    return await this.setBracketOrder(symbol, stopLossPrice, takeProfitPrice);
+    const symUpper = toDeltaSymbol(symbol).toUpperCase().trim();
+    console.log(`🔄 [DeltaExchange] Updating position bracket on ${symUpper}: New SL=$${stopLossPrice}, TP=$${takeProfitPrice}`);
+    await this.cancelBracketOrder(symUpper);
+    await new Promise(r => setTimeout(r, 200));
+    return await this.setBracketOrder(symUpper, stopLossPrice, takeProfitPrice);
   }
 
   public async getTicker(symbol: string): Promise<any> {

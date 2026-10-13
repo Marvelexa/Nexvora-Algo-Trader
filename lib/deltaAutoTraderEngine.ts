@@ -391,6 +391,16 @@ export class DeltaAutoTraderEngine {
           resolvedSL = defaultSL;
         }
 
+        // BREAKEVEN PROTECTION: If Breakeven/Profit Lock is already locked locally on this position,
+        // NEVER allow exchange sync to overwrite our locked Breakeven SL with an older/worse loss SL!
+        if (existing && existing.isBreakevenLocked && existing.stopLossPrice > 0) {
+          if (side === 'BUY' && (!resolvedSL || existing.stopLossPrice > resolvedSL)) {
+            resolvedSL = existing.stopLossPrice;
+          } else if (side === 'SELL' && (!resolvedSL || existing.stopLossPrice < resolvedSL)) {
+            resolvedSL = existing.stopLossPrice;
+          }
+        }
+
         const tpPrice = resolvedTP > 0 ? resolvedTP : defaultTP;
         const slPrice = resolvedSL > 0 ? resolvedSL : defaultSL;
 
@@ -2195,7 +2205,9 @@ export class DeltaAutoTraderEngine {
           pos.isBreakevenLocked = true;
           console.log(`🛡️ [FAST BREAKEVEN LOCKED] ${pos.symbol} reached +$${(pos.highestPnlUSD || pos.pnlUSD).toFixed(2)} USD! SL snapped to +$0.15 green ($${beSLPrice.toFixed(4)}). Trade is 100% risk-free!`);
           if (this.state.mode !== 'SIMULATION_PAPER') {
-            deltaExchange.setBracketOrder(pos.symbol, beSLPrice, pos.takeProfitPrice).catch(() => {});
+            deltaExchange.updateBracketOrder(pos.symbol, beSLPrice, pos.takeProfitPrice).catch(err => {
+              console.warn(`[BREAKEVEN BRACKET ERROR] ${pos.symbol}:`, err?.message || err);
+            });
           }
         }
       }
@@ -2219,7 +2231,9 @@ export class DeltaAutoTraderEngine {
         pos.isBreakevenLocked = true;
         console.log(`🔒 [PROFIT LOCK +$0.50] ${pos.symbol} peak=+$${pos.highestPnlUSD.toFixed(2)}: SL locked at +$0.50 green ($${t1SL.toFixed(4)}).`);
         if (this.state.mode !== 'SIMULATION_PAPER') {
-          deltaExchange.setBracketOrder(pos.symbol, t1SL, pos.takeProfitPrice).catch(() => {});
+          deltaExchange.updateBracketOrder(pos.symbol, t1SL, pos.takeProfitPrice).catch(err => {
+            console.warn(`[PROFIT LOCK BRACKET ERROR] ${pos.symbol}:`, err?.message || err);
+          });
         }
       }
 

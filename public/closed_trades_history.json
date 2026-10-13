@@ -1,5 +1,23 @@
 [
   {
+    "id": "trade-1791918391646-e3zad",
+    "symbol": "DOGEUSD",
+    "side": "BUY",
+    "entryPrice": 0.08427,
+    "exitPrice": 0.08479337,
+    "quantity": 1300,
+    "marginUSD": 4.38204,
+    "notionalUSD": 109.551,
+    "pnlUSD": 0.68,
+    "pnlPercent": 15.52,
+    "rMultiple": 0.69,
+    "exitReason": "EXCHANGE_CLOSED",
+    "entryTime": 1791916464330,
+    "exitTime": 1791918391647,
+    "durationMs": 1927317,
+    "strategyName": "DOGEUSD Dedicated Real Delta Route"
+  },
+  {
     "id": "trade-1791915767301-j2xfn",
     "symbol": "AVAXUSD",
     "side": "BUY",
