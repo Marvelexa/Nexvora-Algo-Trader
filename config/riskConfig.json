@@ -1,6 +1,6 @@
 {
   "maxLeverage": 25,
-  "maxConcurrentPositions": 3,
+  "maxConcurrentPositions": 1,
   "marginPercentPerTrade": 30,
   "maxDailyLossUSD": 5.0,
   "maxLossPerTradeUSD": 0.55,

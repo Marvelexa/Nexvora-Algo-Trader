@@ -106,7 +106,7 @@ export class DeltaAutoTraderEngine {
       losingTradesCount: 0,
       winRatePercent: 0,
       activePositions: [],
-      maxConcurrentPositions: 3, // Up to 3 trades maximum (User Mandate)
+      maxConcurrentPositions: 1, // User Mandate: "also maxium trade is one"
       leverage: 25,
       marginPercentPerTrade: 30.0, // Deploys ~30% margin per slot across 3 slots
       lastScanTimestamp: Date.now(),
@@ -151,8 +151,8 @@ export class DeltaAutoTraderEngine {
             this.state.activePositions = [];
           }
           this.state.mode = computedMode;
-          // Capacity limit (User Mandate: "you can able to do 3 trades maxium")
-          this.state.maxConcurrentPositions = parsed.maxConcurrentPositions || 3;
+          // Maximum 1 Trade Concurrent (User Mandate: "also maxium trade is one")
+          this.state.maxConcurrentPositions = 1;
           this.state.marginPercentPerTrade = 30.0;
           this.state.isInverseTrading = parsed.isInverseTrading !== undefined ? parsed.isInverseTrading : true;
           this.state.shadowGateEnabled = false;
@@ -1555,14 +1555,61 @@ export class DeltaAutoTraderEngine {
       // If position 1 is SELL -> position 2 MUST COPY SELL!
       // If 0 positions active -> Top candidate elects batch direction, all slots copy that direction!
       if (candidatesPool.length > 0) {
-        // Inverse Trading Execution (User Mandate: "ekk kamm kar buy ko sell sell to buy kar mere liyee")
-        const enrichedCandidates = candidatesPool.map(c => {
+        // Dynamic Adaptive Candle-Color Inversion (User Mandate):
+        // "har ek trade inverse mat rakh agar signal buy kaa aurr candle red me haii to usse inverse karna hai waise hii agar buy kaa signal ho aur candle green me ho to buy karna no reverse okayyy"
+        const enrichedCandidates = await Promise.all(candidatesPool.map(async c => {
           const rawSide = c.multiSignal.side;
-          const executedSide: 'BUY' | 'SELL' = this.state.isInverseTrading
-            ? (rawSide === 'BUY' ? 'SELL' : 'BUY')
-            : rawSide;
-          return { ...c, executedSide };
-        });
+          let isCandleGreen = true;
+          let isCandleRed = false;
+
+          try {
+            const liveCandles = await this.fetchCandles(c.symbol, '15m', 5);
+            if (liveCandles && liveCandles.length > 0) {
+              const liveBar = liveCandles[liveCandles.length - 1];
+              const curPrice = await deltaExchange.getMarketPrice(c.cleanDeltaSym) || c.currentPrice;
+              isCandleGreen = curPrice >= liveBar.open;
+              isCandleRed = curPrice < liveBar.open;
+            } else if (c.closedCandles && c.closedCandles.length > 0) {
+              const lastBar = c.closedCandles[c.closedCandles.length - 1];
+              isCandleGreen = lastBar.close >= lastBar.open;
+              isCandleRed = lastBar.close < lastBar.open;
+            }
+          } catch (e) {
+            if (c.closedCandles && c.closedCandles.length > 0) {
+              const lastBar = c.closedCandles[c.closedCandles.length - 1];
+              isCandleGreen = lastBar.close >= lastBar.open;
+              isCandleRed = lastBar.close < lastBar.open;
+            }
+          }
+
+          let executedSide: 'BUY' | 'SELL';
+          let executionMode: TradeExecutionMode;
+          let adaptiveTag: string;
+
+          if (rawSide === 'BUY') {
+            if (isCandleGreen) {
+              executedSide = 'BUY';
+              executionMode = 'DIRECT';
+              adaptiveTag = 'BUY+GREEN ➔ DIRECT BUY';
+            } else {
+              executedSide = 'SELL';
+              executionMode = 'INVERSE_RAW';
+              adaptiveTag = 'BUY+RED ➔ INVERSE SELL';
+            }
+          } else { // rawSide === 'SELL'
+            if (isCandleRed) {
+              executedSide = 'SELL';
+              executionMode = 'DIRECT';
+              adaptiveTag = 'SELL+RED ➔ DIRECT SELL';
+            } else {
+              executedSide = 'BUY';
+              executionMode = 'INVERSE_RAW';
+              adaptiveTag = 'SELL+GREEN ➔ INVERSE BUY';
+            }
+          }
+
+          return { ...c, executedSide, executionMode, adaptiveTag };
+        }));
 
         const alignedCandidates = enrichedCandidates.filter(c => {
           const minRequiredScore = 60; // User Mandate: "60 scroing pe trade lee"
@@ -1583,8 +1630,6 @@ export class DeltaAutoTraderEngine {
         for (const candidate of toExecute) {
           if (this.state.activePositions.length >= maxAllowed) break;
 
-
-
           // Re-check BTC/ETH correlation lock dynamically
           if (candidate.cleanDeltaSym === 'ETHUSD') {
             const liveBtc = this.state.activePositions.find(p => p.symbol === 'BTCUSD');
@@ -1603,14 +1648,12 @@ export class DeltaAutoTraderEngine {
 
           this.candidateLastAttemptTime.set(candidate.cleanDeltaSym, Date.now());
 
-          const candidateSignal: 'BUY' | 'SELL' = candidate.multiSignal.side;
           const candidateStrategyName = candidate.multiSignal.strategyName;
           const candidateAtr = candidate.atr;
-          const setupReason = candidate.multiSignal.reason;
-
           const finalSide = candidate.executedSide;
+          const executionMode = candidate.executionMode;
 
-          // FIX 5: Signal Freshness & Max Chase Distance (1.5 ATR limit)
+          // Signal Freshness & Max Chase Distance (1.5 ATR limit)
           const liveExecutionPrice = await deltaExchange.getMarketPrice(candidate.cleanDeltaSym) || candidate.currentPrice;
           const priceSlip = Math.abs(liveExecutionPrice - candidate.currentPrice);
           const slipAtr = candidateAtr > 0 ? priceSlip / candidateAtr : 0;
@@ -1619,47 +1662,9 @@ export class DeltaAutoTraderEngine {
             continue;
           }
 
-          // REAL-TIME FORMING CANDLE CONVICTION GATE (User Mandate: "Fix buy sell problem")
-          // Rule 1: NEVER BUY if active forming 15M bar is RED (current price < live bar open)
-          // Rule 2: NEVER SELL if active forming 15M bar is GREEN (current price > live bar open)
-          // Rule 3: NEVER BUY if live price is below 15M EMA20
-          // Rule 4: NEVER SELL if live price is above 15M EMA20
-          const liveCandles15m = await this.fetchCandles(candidate.symbol, '15m', 50);
-          if (liveCandles15m && liveCandles15m.length >= 20) {
-            const activeLiveBar = liveCandles15m[liveCandles15m.length - 1];
-            const liveCloses = liveCandles15m.map(c => c.close);
-            const liveEma20 = CryptoDedicatedStrategyEngine.calculateEMA(liveCloses, 20).slice(-1)[0] || liveExecutionPrice;
+          const finalStrategyName = `${candidateStrategyName} [${candidate.adaptiveTag} | TF:${candidate.multiSignal.timeframe}]`;
 
-            if (!this.state.isInverseTrading) {
-              if (finalSide === 'BUY') {
-                if (liveExecutionPrice < activeLiveBar.open) {
-                  console.log(`🛡️ [CANDLE COLOR VETO] ${candidate.cleanDeltaSym} BUY blocked: Active forming 15M candle is RED ($${liveExecutionPrice.toFixed(4)} < Open $${activeLiveBar.open.toFixed(4)}). Never buy into a dumping bar!`);
-                  continue;
-                }
-                if (liveExecutionPrice < liveEma20) {
-                  console.log(`🛡️ [EMA TREND VETO] ${candidate.cleanDeltaSym} BUY blocked: Live price ($${liveExecutionPrice.toFixed(4)}) is below 15M EMA20 ($${liveEma20.toFixed(4)}). Trend buys require price above EMA20! Zero counter-trend guesswork!`);
-                  continue;
-                }
-              }
-
-              if (finalSide === 'SELL') {
-                if (liveExecutionPrice > activeLiveBar.open) {
-                  console.log(`🛡️ [CANDLE COLOR VETO] ${candidate.cleanDeltaSym} SELL blocked: Active forming 15M candle is GREEN ($${liveExecutionPrice.toFixed(4)} > Open $${activeLiveBar.open.toFixed(4)}). Never short into a pumping bar!`);
-                  continue;
-                }
-                if (liveExecutionPrice > liveEma20) {
-                  console.log(`🛡️ [EMA TREND VETO] ${candidate.cleanDeltaSym} SELL blocked: Live price ($${liveExecutionPrice.toFixed(4)}) is above 15M EMA20 ($${liveEma20.toFixed(4)}). Never sell above EMA20! Zero counter-trend guesswork!`);
-                  continue;
-                }
-              }
-            }
-          }
-
-          const executionMode: TradeExecutionMode = this.state.isInverseTrading ? 'INVERSE_RAW' : 'DIRECT';
-          const modeTag = `[${this.state.isInverseTrading ? 'INVERSE' : 'DIRECT'}: ${finalSide} | TF:${candidate.multiSignal.timeframe}]`;
-          const finalStrategyName = `${candidateStrategyName} ${modeTag}`;
-
-          console.log(`🎯 [MULTI-STRATEGY DISPATCH] ${candidate.cleanDeltaSym} (${candidate.multiSignal.timeframe}): Strategy="${candidateStrategyName}" (Score: ${candidate.multiSignal.confidenceScore}) ➔ EXECUTING ${finalSide} @ $${liveExecutionPrice.toFixed(4)}. Direction: BUY=${currentBuyCount} SELL=${currentSellCount}.`);
+          console.log(`🎯 [MULTI-STRATEGY DISPATCH] ${candidate.cleanDeltaSym} (${candidate.multiSignal.timeframe}): Strategy="${candidateStrategyName}" (Score: ${candidate.multiSignal.confidenceScore}) ➔ EXECUTING ${finalSide} (${candidate.adaptiveTag}) @ $${liveExecutionPrice.toFixed(4)}.`);
 
           // REAL MARKET EXECUTION
           const newPos = await this.executeNewPosition({
@@ -1671,8 +1676,8 @@ export class DeltaAutoTraderEngine {
             shadowConfirmedSeconds: 0,
             executionMode,
             reversalReason: undefined,
-            customTP: this.state.isInverseTrading ? undefined : candidate.multiSignal?.customTP,
-            customSL: this.state.isInverseTrading ? undefined : candidate.multiSignal?.customSL,
+            customTP: executionMode === 'INVERSE_RAW' ? undefined : candidate.multiSignal?.customTP,
+            customSL: executionMode === 'INVERSE_RAW' ? undefined : candidate.multiSignal?.customSL,
           });
 
           if (newPos) {
@@ -1847,22 +1852,13 @@ export class DeltaAutoTraderEngine {
       return null;
     }
 
-    // REAL-TIME ACTIVE CANDLE CONVICTION GATE ASSERTION
-    // Guarantee that no execution can bypass active candle color check
+    // REAL-TIME ACTIVE CANDLE CONVICTION CONFIRMATION
     try {
       const liveCandlesGuard = await this.fetchCandles(params.symbol, '15m', 10);
       if (liveCandlesGuard && liveCandlesGuard.length > 0) {
         const activeBar = liveCandlesGuard[liveCandlesGuard.length - 1];
-        if (!this.state.isInverseTrading) {
-          if (orderSide === 'BUY' && params.signalPrice < activeBar.open) {
-            console.warn(`🛡️ [CANDLE COLOR VETO] ${cleanSym} BUY blocked: Active forming 15M bar is RED ($${params.signalPrice.toFixed(4)} < Open $${activeBar.open.toFixed(4)}). Never buy a dumping candle!`);
-            return null;
-          }
-          if (orderSide === 'SELL' && params.signalPrice > activeBar.open) {
-            console.warn(`🛡️ [CANDLE COLOR VETO] ${cleanSym} SELL blocked: Active forming 15M bar is GREEN ($${params.signalPrice.toFixed(4)} > Open $${activeBar.open.toFixed(4)}). Never short a pumping candle!`);
-            return null;
-          }
-        }
+        const isBarGreen = params.signalPrice >= activeBar.open;
+        console.log(`🕯️ [CANDLE COLOR ADAPTIVE] ${cleanSym} ${orderSide} (${params.executionMode}): Active 15M bar is ${isBarGreen ? 'GREEN' : 'RED'} ($${params.signalPrice.toFixed(4)} vs Open $${activeBar.open.toFixed(4)})`);
       }
     } catch (e) {}
 
@@ -2266,9 +2262,10 @@ export class DeltaAutoTraderEngine {
       let isEarlyReversalDetected = false;
       let reversalReason = '';
 
-      // In Inverse Mode: holding BUY means entry was raw SELL. Threat is raw BUY flip.
-      // In Direct Mode: holding BUY means threat is raw SELL flip.
-      const adverseThreatSide = this.state.isInverseTrading
+      // If position was executed as INVERSE: holding BUY means raw was SELL, so threat is raw BUY flip.
+      // If position was executed as DIRECT: holding BUY means raw was BUY, so threat is raw SELL flip.
+      const isPosInverted = pos.executionMode === 'INVERSE_RAW';
+      const adverseThreatSide = isPosInverted
         ? (pos.side === 'BUY' ? 'BUY' : 'SELL')
         : (pos.side === 'BUY' ? 'SELL' : 'BUY');
 

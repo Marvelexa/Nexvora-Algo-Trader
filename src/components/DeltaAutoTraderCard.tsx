@@ -232,9 +232,9 @@ export const DeltaAutoTraderCard: React.FC<DeltaAutoTraderCardProps> = ({ onSele
               <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono border ${
                 status?.mode === 'SIMULATION_PAPER'
                   ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                  : 'bg-slate-800 text-cyan-300 border-slate-700'
+                  : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-[0_0_10px_rgba(16,185,129,0.3)]'
               }`}>
-                {status?.mode === 'SIMULATION_PAPER' ? 'DELTA DEMO (TESTNET)' : 'DELTA INDIA GATEWAY'}
+                {status?.mode === 'SIMULATION_PAPER' ? 'DELTA DEMO (TESTNET)' : '🔴 REAL ACCOUNT (DELTA INDIA)'}
               </span>
               
             </div>
@@ -304,33 +304,15 @@ export const DeltaAutoTraderCard: React.FC<DeltaAutoTraderCardProps> = ({ onSele
           </div>
 
           
-          {/* Mode Indicator Badge (Interactive Toggle) */}
-          <button
+          {/* Mode Indicator Badge */}
+          <div
             id="badge-direct-mode"
-            onClick={handleToggleInverse}
-            className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 shadow-md cursor-pointer transition-all hover:scale-105 ${
-              status?.isInverseTrading
-                ? 'bg-purple-950/60 text-purple-300 border border-purple-700/60 hover:bg-purple-900/60'
-                : 'bg-emerald-950/60 text-emerald-300 border border-emerald-700/60 hover:bg-emerald-900/60'
-            }`}
-            title={
-              status?.isInverseTrading
-                ? 'Inverse Mode Active: BUY signals execute as SELL; SELL signals execute as BUY. Click to switch to Direct Mode.'
-                : 'Direct Mode Active: Signals execute directly. Click to switch to Inverse Mode.'
-            }
+            className="px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 shadow-md bg-purple-950/60 text-purple-300 border border-purple-700/60"
+            title="Candle-Color Adaptive: If BUY + Green candle ➔ BUY (Direct). If BUY + Red candle ➔ SELL (Inverse). Max 1 Trade."
           >
-            {status?.isInverseTrading ? (
-              <>
-                <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-                <span>🔄 INVERSE MODE (BUY ➔ SELL)</span>
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-                <span>🎯 DIRECT TREND MODE</span>
-              </>
-            )}
-          </button>
+            <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+            <span>🔄 ADAPTIVE CANDLE-COLOR (MAX 1 TRADE)</span>
+          </div>
 
           {/* Start/Pause Button */}
           <button
