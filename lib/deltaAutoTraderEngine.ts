@@ -2252,14 +2252,51 @@ export class DeltaAutoTraderEngine {
     }
 
     // =========================================================================
-    // EARLY REVERSAL EXIT SYSTEM: PERMANENTLY DISABLED
-    // Premature early reversal exits were killing healthy trades on normal noise wicks
-    // at -$0.35 to -$0.45 before trades could reach the +$1.00 TP target or test -$0.55 SL.
-    // Positions are now managed strictly by:
-    // 1. Take Profit (TP) at +$1.00 USD
-    // 2. Hard Stop Loss (SL) capped at -$0.55 USD
-    // 3. Fast Breakeven locking at +$0.50 USD (+0.15 green lock)
     // =========================================================================
+    // SMART REVERSAL PROTECTION (User Mandate: "reversal hi rakho na")
+    // Protects capital if the market genuinely flips against the position with score >= 70
+    // after at least 3 minutes, without suiciding on initial 20-second entry noise wicks!
+    // =========================================================================
+    const tradeAgeMs = Date.now() - (pos.entryTime || 0);
+    if (tradeAgeMs >= 180000) {
+      const cleanSym = (pos.symbol || '').toUpperCase().replace('USDT', 'USD');
+      const diag = this.lastDiagnostics.get(cleanSym) || this.lastDiagnostics.get(pos.symbol);
+      const quant = diag?.quantMath;
+
+      let isEarlyReversalDetected = false;
+      let reversalReason = '';
+
+      // In Inverse Mode: holding BUY means entry was raw SELL. Threat is raw BUY flip.
+      // In Direct Mode: holding BUY means threat is raw SELL flip.
+      const adverseThreatSide = this.state.isInverseTrading
+        ? (pos.side === 'BUY' ? 'BUY' : 'SELL')
+        : (pos.side === 'BUY' ? 'SELL' : 'BUY');
+
+      const adverseScore = adverseThreatSide === 'BUY'
+        ? (quant?.scores?.totalBuyScore || 0)
+        : (quant?.scores?.totalSellScore || 0);
+
+      // Has price significantly moved against entry (>= 0.75 ATR)?
+      const hasAdversePrice = pos.side === 'BUY'
+        ? currentPrice < pos.entryPrice - Math.max(pos.atr * 0.75, pos.entryPrice * 0.004)
+        : currentPrice > pos.entryPrice + Math.max(pos.atr * 0.75, pos.entryPrice * 0.004);
+
+      if (quant && hasAdversePrice && pos.pnlUSD <= -0.40) {
+        if (quant.recommendedSide === adverseThreatSide && (quant.quantScore >= 70 || adverseScore >= 70)) {
+          isEarlyReversalDetected = true;
+          reversalReason = `Confirmed Post-Entry Quant Flip to ${adverseThreatSide} (Score: ${quant.quantScore}/100, Loss: $${pos.pnlUSD.toFixed(2)})`;
+        }
+      }
+
+      if (isEarlyReversalDetected) {
+        console.log(`⚡ [SMART REVERSAL EXIT] ${pos.symbol} (${pos.side}): ${reversalReason}. Safely cutting position before SL!`);
+        const targetIdx = this.state.activePositions.findIndex(p => p.id === pos.id);
+        if (targetIdx !== -1) {
+          await this.closePosition(targetIdx, 'REVERSAL_EXIT_EARLY', currentPrice);
+        }
+        return;
+      }
+    }
 
     // 1. Take Profit (TP) Check with ZERO MS DELAY (User Mandate: $1.00 USD target):
     // "hamara tp 1000 rupees hai to 1 dollar profit ek trade bohot haii aise target hit hona chaiyee"
