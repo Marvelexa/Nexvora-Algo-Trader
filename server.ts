@@ -942,13 +942,13 @@ async function startServer() {
     res.json({ success: true, status: deltaAutoTrader.getStatus() });
   });
 
-  // 4b-2. Explicit Toggle Inverse Trading endpoint - PERMANENTLY DISABLED (solutions.pdf Issue 3)
+  // 4b-2. Explicit Toggle Inverse Trading endpoint (User Mandate: BUY <-> SELL)
   app.post('/api/autotrader/toggle-inverse', (req, res) => {
-    deltaAutoTrader.toggleInverse(false);
-    res.status(400).json({
-      success: false,
-      isInverseTrading: false,
-      error: 'Inverse trading mode has been permanently removed. Direct execution is strictly enforced.',
+    const isInverse = deltaAutoTrader.toggleInverse(req.body?.isInverseTrading);
+    res.json({
+      success: true,
+      isInverseTrading: isInverse,
+      message: `Inverse trading mode is now ${isInverse ? 'ENABLED (BUY -> SELL, SELL -> BUY)' : 'DISABLED (DIRECT)'}`,
     });
   });
 

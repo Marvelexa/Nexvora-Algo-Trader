@@ -208,14 +208,22 @@ export const CandlestickPatternPnLTerminal: React.FC<CandlestickPatternPnLTermin
 
           {/* Action Buttons Toolbar: Reversal Toggle + Pine Script Exporter */}
           <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
-            {/* Direct Trend Mode Indicator Badge (solutions.pdf Issue 3) */}
+            {/* Mode Indicator Badge */}
             <div
               id="badge-terminal-direct-mode"
-              className="px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 shadow-md bg-emerald-950/60 text-emerald-300 border border-emerald-700/60"
-              title="Direct Trend Mode: Signals execute strictly in their original direction without inverse flipping."
+              className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 shadow-md ${
+                status?.isInverseTrading
+                  ? 'bg-purple-950/60 text-purple-300 border border-purple-700/60'
+                  : 'bg-emerald-950/60 text-emerald-300 border border-emerald-700/60'
+              }`}
+              title={
+                status?.isInverseTrading
+                  ? 'Inverse Mode: BUY signals execute as SELL; SELL signals execute as BUY.'
+                  : 'Direct Trend Mode: Signals execute strictly in their original direction without inverse flipping.'
+              }
             >
-              <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-              <span>🎯 DIRECT TREND MODE</span>
+              <Sparkles className={`w-3.5 h-3.5 ${status?.isInverseTrading ? 'text-purple-400' : 'text-emerald-400'}`} />
+              <span>{status?.isInverseTrading ? '🔄 INVERSE MODE (BUY ➔ SELL)' : '🎯 DIRECT TREND MODE'}</span>
             </div>
 
             {/* Quick Pine Script Exporter Button */}

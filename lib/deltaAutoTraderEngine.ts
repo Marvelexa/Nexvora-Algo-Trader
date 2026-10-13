@@ -115,7 +115,7 @@ export class DeltaAutoTraderEngine {
       activeShadowCandidates: [],
       trapsFilteredCount: 0,
       capitalSavedUSD: 0,
-      isInverseTrading: false, // Direct mode — proper signals + proper R:R
+      isInverseTrading: true, // User Directive: Inverted mode (BUY -> SELL, SELL -> BUY)
       minCapitalFloorINR: 50, // Stop if capital drops to zero / floor (User Mandate)
       targetCapitalGoalINR: 10000, // Target profit goal
       recentFilteredTraps: [],
@@ -154,25 +154,8 @@ export class DeltaAutoTraderEngine {
           // Capacity limit (User Mandate: "you can able to do 3 trades maxium")
           this.state.maxConcurrentPositions = parsed.maxConcurrentPositions || 3;
           this.state.marginPercentPerTrade = 30.0;
-          this.state.isInverseTrading = false;
+          this.state.isInverseTrading = parsed.isInverseTrading !== undefined ? parsed.isInverseTrading : true;
           this.state.shadowGateEnabled = false;
-          if (Array.isArray(this.state.activePositions)) {
-            for (const pos of this.state.activePositions) {
-              if (pos.executionMode === 'SMART_REVERSED' || pos.executionMode === 'INVERSE_RAW') {
-                pos.executionMode = 'DIRECT';
-              }
-              if (pos.strategyName) {
-                pos.strategyName = pos.strategyName
-                  .replace(/\[SMART_REVERSED:[^\]]*\]/g, `[DIRECT: ${pos.side}]`)
-                  .replace(/\[SMART REVERSAL:[^\]]*\]/g, '')
-                  .replace(/\[INVERSE:[^\]]*\]/g, `[DIRECT: ${pos.side}]`)
-                  .replace(/Reversed \([^)]*\) \[INVERSE MODE\]/g, `Direct ${pos.side} [Playbook 2026 Engine]`);
-              }
-              if (pos.reversalReason) {
-                pos.reversalReason = undefined;
-              }
-            }
-          }
           this.deduplicateActivePositions();
         }
       }
@@ -1635,10 +1618,12 @@ export class DeltaAutoTraderEngine {
       // If position 1 is SELL -> position 2 MUST COPY SELL!
       // If 0 positions active -> Top candidate elects batch direction, all slots copy that direction!
       if (candidatesPool.length > 0) {
-        // Direct execution without reversal engine interference (User mandate: "reversal engine delet kardo")
+        // Inverse Trading Execution (User Mandate: "ekk kamm kar buy ko sell sell to buy kar mere liyee")
         const enrichedCandidates = candidatesPool.map(c => {
           const rawSide = c.multiSignal.side;
-          const executedSide: 'BUY' | 'SELL' = rawSide;
+          const executedSide: 'BUY' | 'SELL' = this.state.isInverseTrading
+            ? (rawSide === 'BUY' ? 'SELL' : 'BUY')
+            : rawSide;
           return { ...c, executedSide };
         });
 
@@ -1708,31 +1693,33 @@ export class DeltaAutoTraderEngine {
             const liveCloses = liveCandles15m.map(c => c.close);
             const liveEma20 = CryptoDedicatedStrategyEngine.calculateEMA(liveCloses, 20).slice(-1)[0] || liveExecutionPrice;
 
-            if (finalSide === 'BUY') {
-              if (liveExecutionPrice < activeLiveBar.open) {
-                console.log(`🛡️ [CANDLE COLOR VETO] ${candidate.cleanDeltaSym} BUY blocked: Active forming 15M candle is RED ($${liveExecutionPrice.toFixed(4)} < Open $${activeLiveBar.open.toFixed(4)}). Never buy into a dumping bar!`);
-                continue;
+            if (!this.state.isInverseTrading) {
+              if (finalSide === 'BUY') {
+                if (liveExecutionPrice < activeLiveBar.open) {
+                  console.log(`🛡️ [CANDLE COLOR VETO] ${candidate.cleanDeltaSym} BUY blocked: Active forming 15M candle is RED ($${liveExecutionPrice.toFixed(4)} < Open $${activeLiveBar.open.toFixed(4)}). Never buy into a dumping bar!`);
+                  continue;
+                }
+                if (liveExecutionPrice < liveEma20) {
+                  console.log(`🛡️ [EMA TREND VETO] ${candidate.cleanDeltaSym} BUY blocked: Live price ($${liveExecutionPrice.toFixed(4)}) is below 15M EMA20 ($${liveEma20.toFixed(4)}). Trend buys require price above EMA20! Zero counter-trend guesswork!`);
+                  continue;
+                }
               }
-              if (liveExecutionPrice < liveEma20) {
-                console.log(`🛡️ [EMA TREND VETO] ${candidate.cleanDeltaSym} BUY blocked: Live price ($${liveExecutionPrice.toFixed(4)}) is below 15M EMA20 ($${liveEma20.toFixed(4)}). Trend buys require price above EMA20! Zero counter-trend guesswork!`);
-                continue;
-              }
-            }
 
-            if (finalSide === 'SELL') {
-              if (liveExecutionPrice > activeLiveBar.open) {
-                console.log(`🛡️ [CANDLE COLOR VETO] ${candidate.cleanDeltaSym} SELL blocked: Active forming 15M candle is GREEN ($${liveExecutionPrice.toFixed(4)} > Open $${activeLiveBar.open.toFixed(4)}). Never short into a pumping bar!`);
-                continue;
-              }
-              if (liveExecutionPrice > liveEma20) {
-                console.log(`🛡️ [EMA TREND VETO] ${candidate.cleanDeltaSym} SELL blocked: Live price ($${liveExecutionPrice.toFixed(4)}) is above 15M EMA20 ($${liveEma20.toFixed(4)}). Never sell above EMA20! Zero counter-trend guesswork!`);
-                continue;
+              if (finalSide === 'SELL') {
+                if (liveExecutionPrice > activeLiveBar.open) {
+                  console.log(`🛡️ [CANDLE COLOR VETO] ${candidate.cleanDeltaSym} SELL blocked: Active forming 15M candle is GREEN ($${liveExecutionPrice.toFixed(4)} > Open $${activeLiveBar.open.toFixed(4)}). Never short into a pumping bar!`);
+                  continue;
+                }
+                if (liveExecutionPrice > liveEma20) {
+                  console.log(`🛡️ [EMA TREND VETO] ${candidate.cleanDeltaSym} SELL blocked: Live price ($${liveExecutionPrice.toFixed(4)}) is above 15M EMA20 ($${liveEma20.toFixed(4)}). Never sell above EMA20! Zero counter-trend guesswork!`);
+                  continue;
+                }
               }
             }
           }
 
-          const executionMode: TradeExecutionMode = 'DIRECT';
-          const modeTag = `[DIRECT: ${finalSide} | TF:${candidate.multiSignal.timeframe}]`;
+          const executionMode: TradeExecutionMode = this.state.isInverseTrading ? 'INVERSE_RAW' : 'DIRECT';
+          const modeTag = `[${this.state.isInverseTrading ? 'INVERSE' : 'DIRECT'}: ${finalSide} | TF:${candidate.multiSignal.timeframe}]`;
           const finalStrategyName = `${candidateStrategyName} ${modeTag}`;
 
           console.log(`🎯 [MULTI-STRATEGY DISPATCH] ${candidate.cleanDeltaSym} (${candidate.multiSignal.timeframe}): Strategy="${candidateStrategyName}" (Score: ${candidate.multiSignal.confidenceScore}) ➔ EXECUTING ${finalSide} @ $${liveExecutionPrice.toFixed(4)}. Direction: BUY=${currentBuyCount} SELL=${currentSellCount}.`);
@@ -2343,50 +2330,60 @@ export class DeltaAutoTraderEngine {
 
       if (pos.side === 'SELL') {
         // Holding SHORT: Bullish reversal threats
-        const hasAdversePrice = currentPrice > pos.entryPrice + Math.max(pos.atr * 0.35, pos.entryPrice * 0.0025);
-        const isBullishQuantFlip = quant && (
-          (quant.recommendedSide === 'BUY' && (quant.quantScore >= 50 || (quant.scores?.totalBuyScore || 0) >= 50)) ||
-          quant.supportBounceConfirmed === true
+        const hasAdversePrice = currentPrice > pos.entryPrice + Math.max(pos.atr * 0.50, pos.entryPrice * 0.0035);
+        const adverseQuantSide = this.state.isInverseTrading ? 'SELL' : 'BUY';
+        const isBullishQuantFlip = quant && hasAdversePrice && pos.pnlUSD <= -0.35 && (
+          (quant.recommendedSide === adverseQuantSide && (quant.quantScore >= 60 || (quant.scores?.totalBuyScore || 0) >= 60)) ||
+          (!this.state.isInverseTrading && quant.supportBounceConfirmed === true)
         );
         const waveValue = diag?.waveValue ?? 0;
         const waveSignal = diag?.waveSignal ?? 0;
         const rsi = diag?.rsi14 ?? 50;
-        const isBullishIndicatorReversal = (diag?.readySignal === 'BUY') || 
-                                           (waveValue > waveSignal && waveValue > 0 && hasAdversePrice) || 
-                                           (rsi < 32 && hasAdversePrice);
-        const isBullishMicroReversal = quant && (quant.fisherTransform > quant.fisherSignal) && (quant.scores?.totalBuyScore || 0) >= 40 && hasAdversePrice;
+        const isBullishIndicatorReversal = hasAdversePrice && pos.pnlUSD <= -0.35 && (
+          (!this.state.isInverseTrading && diag?.readySignal === 'BUY') || 
+          (waveValue > waveSignal && waveValue > 0) || 
+          (rsi < 32)
+        );
+        const isBullishMicroReversal = quant && hasAdversePrice && pos.pnlUSD <= -0.35 && 
+          (quant.fisherTransform > quant.fisherSignal) && 
+          (quant.scores?.totalBuyScore || 0) >= 60;
 
         if (isBullishQuantFlip) {
           isEarlyReversalDetected = true;
-          reversalReason = `Quant Engine flipped to BUY (Score: ${quant.quantScore}/100, SupportBounce: ${quant.supportBounceConfirmed})`;
+          reversalReason = `Quant Engine flipped to ${adverseQuantSide} with adverse price (Score: ${quant.quantScore}/100)`;
         } else if (isBullishIndicatorReversal) {
           isEarlyReversalDetected = true;
-          reversalReason = `Dedicated Strategy Bullish Reversal (Signal: ${diag?.readySignal}, RSI: ${rsi.toFixed(1)}, Wave: ${waveValue.toFixed(1)} > ${waveSignal.toFixed(1)})`;
+          reversalReason = `Dedicated Strategy Bullish Reversal with adverse price (RSI: ${rsi.toFixed(1)}, Wave: ${waveValue.toFixed(1)})`;
         } else if (isBullishMicroReversal) {
           isEarlyReversalDetected = true;
           reversalReason = `Fisher Bullish Cross with adverse momentum (+${quant.scores?.totalBuyScore} Buy pts)`;
         }
       } else if (pos.side === 'BUY') {
         // Holding LONG: Bearish reversal threats
-        const hasAdversePrice = currentPrice < pos.entryPrice - Math.max(pos.atr * 0.35, pos.entryPrice * 0.0025);
-        const isBearishQuantFlip = quant && (
-          (quant.recommendedSide === 'SELL' && (quant.quantScore >= 50 || (quant.scores?.totalSellScore || 0) >= 50)) ||
-          quant.resistanceRejectConfirmed === true
+        const hasAdversePrice = currentPrice < pos.entryPrice - Math.max(pos.atr * 0.50, pos.entryPrice * 0.0035);
+        const adverseQuantSide = this.state.isInverseTrading ? 'BUY' : 'SELL';
+        const isBearishQuantFlip = quant && hasAdversePrice && pos.pnlUSD <= -0.35 && (
+          (quant.recommendedSide === adverseQuantSide && (quant.quantScore >= 60 || (quant.scores?.totalSellScore || 0) >= 60)) ||
+          (!this.state.isInverseTrading && quant.resistanceRejectConfirmed === true)
         );
         const waveValue = diag?.waveValue ?? 0;
         const waveSignal = diag?.waveSignal ?? 0;
         const rsi = diag?.rsi14 ?? 50;
-        const isBearishIndicatorReversal = (diag?.readySignal === 'SELL') || 
-                                           (waveValue < waveSignal && waveValue < 0 && hasAdversePrice) || 
-                                           (rsi > 68 && hasAdversePrice);
-        const isBearishMicroReversal = quant && (quant.fisherTransform < quant.fisherSignal) && (quant.scores?.totalSellScore || 0) >= 40 && hasAdversePrice;
+        const isBearishIndicatorReversal = hasAdversePrice && pos.pnlUSD <= -0.35 && (
+          (!this.state.isInverseTrading && diag?.readySignal === 'SELL') || 
+          (waveValue < waveSignal && waveValue < 0) || 
+          (rsi > 68)
+        );
+        const isBearishMicroReversal = quant && hasAdversePrice && pos.pnlUSD <= -0.35 && 
+          (quant.fisherTransform < quant.fisherSignal) && 
+          (quant.scores?.totalSellScore || 0) >= 60;
 
         if (isBearishQuantFlip) {
           isEarlyReversalDetected = true;
-          reversalReason = `Quant Engine flipped to SELL (Score: ${quant.quantScore}/100, ResistanceReject: ${quant.resistanceRejectConfirmed})`;
+          reversalReason = `Quant Engine flipped to ${adverseQuantSide} with adverse price (Score: ${quant.quantScore}/100)`;
         } else if (isBearishIndicatorReversal) {
           isEarlyReversalDetected = true;
-          reversalReason = `Dedicated Strategy Bearish Reversal (Signal: ${diag?.readySignal}, RSI: ${rsi.toFixed(1)}, Wave: ${waveValue.toFixed(1)} < ${waveSignal.toFixed(1)})`;
+          reversalReason = `Dedicated Strategy Bearish Reversal with adverse price (RSI: ${rsi.toFixed(1)}, Wave: ${waveValue.toFixed(1)})`;
         } else if (isBearishMicroReversal) {
           isEarlyReversalDetected = true;
           reversalReason = `Fisher Bearish Cross with adverse momentum (+${quant.scores?.totalSellScore} Sell pts)`;
@@ -2640,13 +2637,14 @@ export class DeltaAutoTraderEngine {
     this.deduplicateActivePositions();
     this.state.activeShadowCandidates = [];
     this.state.smartDetectorEnabled = true;
-    this.state.smartAdaptiveMode = true;
-    this.state.isInverseTrading = false;
-    const directCount = this.state.activePositions.length;
+    const directCount = this.state.isInverseTrading ? 0 : this.state.activePositions.length;
+    const reversedCount = this.state.isInverseTrading ? this.state.activePositions.length : 0;
     this.state.smartDetectorSummary = {
-      activeMode: 'PURE_DIRECT_TRADING (100% Direct Long & Short Execution)',
+      activeMode: this.state.isInverseTrading 
+        ? 'INVERSE_TRADING (User Inverted: BUY ➔ SELL, SELL ➔ BUY)' 
+        : 'PURE_DIRECT_TRADING (100% Direct Long & Short Execution)',
       directTradesCount: directCount,
-      reversedTradesCount: 0,
+      reversedTradesCount: reversedCount,
       filteredChopCount: this.state.trapsFilteredCount,
     };
     return { ...this.state };
@@ -2697,11 +2695,11 @@ export class DeltaAutoTraderEngine {
     return [...this.closedTradesHistory];
   }
 
-  public toggleInverse(_explicitState?: boolean): boolean {
-    this.state.isInverseTrading = false;
+  public toggleInverse(explicitState?: boolean): boolean {
+    this.state.isInverseTrading = explicitState !== undefined ? explicitState : !this.state.isInverseTrading;
     this.saveState();
-    console.log(`🔒 [INVERSE MODE DEPRECATED] Direct execution is permanently locked and enforced.`);
-    return false;
+    console.log(`🔄 [INVERSE TRADING TOGGLED] isInverseTrading set to: ${this.state.isInverseTrading} (User Mandate: BUY <-> SELL)`);
+    return this.state.isInverseTrading;
   }
 
   public setNewTradesPaused(paused: boolean): boolean {
@@ -2722,7 +2720,8 @@ export class DeltaAutoTraderEngine {
     if (config.isNewTradesPaused !== undefined) {
       this.state.isNewTradesPaused = config.isNewTradesPaused;
     }
-    this.state = { ...this.state, ...config, isInverseTrading: false };
+    const newInverse = config.isInverseTrading !== undefined ? config.isInverseTrading : this.state.isInverseTrading;
+    this.state = { ...this.state, ...config, isInverseTrading: newInverse };
     if (config.maxConcurrentPositions !== undefined) {
       this.state.maxConcurrentPositions = config.maxConcurrentPositions;
     } else if (!this.state.maxConcurrentPositions) {

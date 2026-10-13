@@ -113,6 +113,21 @@ export const DeltaAutoTraderCard: React.FC<DeltaAutoTraderCardProps> = ({ onSele
     }
   };
 
+  const handleToggleInverse = async () => {
+    try {
+      const res = await fetch('/api/autotrader/toggle-inverse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setStatus(prev => prev ? { ...prev, isInverseTrading: data.isInverseTrading } : null);
+      }
+    } catch (e) {
+      console.error('Failed to toggle inverse mode:', e);
+    }
+  };
+
 
   
     const handleClosePosition = async (positionId: string, symbol: string) => {
@@ -289,15 +304,33 @@ export const DeltaAutoTraderCard: React.FC<DeltaAutoTraderCardProps> = ({ onSele
           </div>
 
           
-          {/* Direct Mode Indicator Badge (solutions.pdf Issue 3) */}
-          <div
+          {/* Mode Indicator Badge (Interactive Toggle) */}
+          <button
             id="badge-direct-mode"
-            className="px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 shadow-md bg-emerald-950/60 text-emerald-300 border border-emerald-700/60"
-            title="Direct Mode: Signals execute strictly in their original direction without inverse flipping."
+            onClick={handleToggleInverse}
+            className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 shadow-md cursor-pointer transition-all hover:scale-105 ${
+              status?.isInverseTrading
+                ? 'bg-purple-950/60 text-purple-300 border border-purple-700/60 hover:bg-purple-900/60'
+                : 'bg-emerald-950/60 text-emerald-300 border border-emerald-700/60 hover:bg-emerald-900/60'
+            }`}
+            title={
+              status?.isInverseTrading
+                ? 'Inverse Mode Active: BUY signals execute as SELL; SELL signals execute as BUY. Click to switch to Direct Mode.'
+                : 'Direct Mode Active: Signals execute directly. Click to switch to Inverse Mode.'
+            }
           >
-            <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-            <span>🎯 DIRECT TREND MODE</span>
-          </div>
+            {status?.isInverseTrading ? (
+              <>
+                <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                <span>🔄 INVERSE MODE (BUY ➔ SELL)</span>
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                <span>🎯 DIRECT TREND MODE</span>
+              </>
+            )}
+          </button>
 
           {/* Start/Pause Button */}
           <button
