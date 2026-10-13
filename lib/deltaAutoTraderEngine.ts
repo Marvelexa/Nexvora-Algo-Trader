@@ -1056,80 +1056,13 @@ export class DeltaAutoTraderEngine {
 
     if (candidates.length === 0) return null;
 
-    // CHOP GATE FILTER (Severe Chop Decoupling):
-    // If in severe chop (chopScore >= 75 && !isValidRange), only allow high-conviction
-    // structural breakouts/pullbacks and dedicated indicators (score >= 80) to bypass chop.
-    let eligibleCandidates = candidates;
-    if (isSevereChop) {
-      const chopBypassCandidates = candidates.filter(cand => {
-        const isBypass = cand.confidenceScore >= 88 && (
-          cand.strategyName.includes('BREAKOUT') ||
-          cand.strategyName.includes('LIQUIDITY_SWEEP') ||
-          cand.strategyName.includes('Breakout')
-        );
-        return isBypass;
-      });
+    // USER MANDATE: "jaise hi dikhee kii score 60 hai trade ftak se lele"
+    // Any candidate with confidence score >= 60 executes immediately with zero secondary gating!
+    const validCandidates = candidates.filter(cand => cand.confidenceScore >= 60);
+    if (validCandidates.length === 0) return null;
 
-      if (chopBypassCandidates.length === 0) {
-        console.log(`🛡️ [CHOP GATE BLOCKED] ${cleanSym} in severe CHOP Mode (Score: ${chopAnalysis.chopScore}/100, CI: ${chopAnalysis.choppinessIndex}). ${candidates.length} candidates lacked high-conviction breakout/pullback/indicator score >= 80. Standing aside.`);
-        return null;
-      }
-      eligibleCandidates = chopBypassCandidates;
-    }
-
-    // -------------------------------------------------------------
-    // MARKET TRAP SHIELD (Section 4, 5, 6 of Chop and Market Traps Playbook 2026)
-    // Filters out Fakeouts, Stop Hunts, Crowded Squeezes, Falling Knives, and Over-Tested Levels
-    // -------------------------------------------------------------
-    const safeCandidates = eligibleCandidates.filter(cand => {
-      // Pass the actual broken structural swing level rather than entryPrice (which was lastBar.close)
-      const isBreakout = cand.strategyName.includes('BREAKOUT') || cand.strategyName.includes('Breakout');
-      let structuralLevel = (paVerdict && paVerdict.side === cand.side) ? paVerdict.keyLevelPrice : undefined;
-      if (!structuralLevel || Math.abs(structuralLevel - closedCandles15m[closedCandles15m.length - 1].close) < 1e-5) {
-        const priorBars = closedCandles15m.slice(-21, -1);
-        if (priorBars.length > 0) {
-          if (isBreakout) {
-            structuralLevel = cand.side === 'BUY'
-              ? Math.max(...priorBars.map(c => c.high))
-              : Math.min(...priorBars.map(c => c.low));
-          } else {
-            structuralLevel = cand.side === 'BUY'
-              ? Math.min(...priorBars.map(c => c.low))
-              : Math.max(...priorBars.map(c => c.high));
-          }
-        }
-      }
-
-      const levelType = isBreakout
-        ? (cand.side === 'BUY' ? 'RESISTANCE' : 'SUPPORT')
-        : (cand.side === 'BUY' ? 'SUPPORT' : 'RESISTANCE');
-
-      const trapCheck = marketTraps.evaluateMarketTraps({
-        symbol: cleanSym,
-        side: cand.side,
-        setupType: cand.strategyName,
-        marketStructure: paVerdict?.marketStructure || 'RANGE',
-        candles: closedCandles15m,
-        targetLevelPrice: structuralLevel,
-        levelType,
-        microstructure: microData,
-      });
-
-      if (trapCheck.isBlockedByTrap) {
-        console.log(`🚫 [TRAP SHIELD BLOCKED] ${cleanSym} ${cand.side} blocked by ${trapCheck.trapType}: ${trapCheck.trapReason}`);
-        return false;
-      }
-      return true;
-    });
-
-    if (safeCandidates.length === 0) return null;
-
-    // -------------------------------------------------------------
-    // LATE_SKIP GATE PERMANENTLY REMOVED (User mandate: "system not take any trade")
-    // Safe confluence candidates directly sort by conviction score and execute
-    // -------------------------------------------------------------
-    safeCandidates.sort((a, b) => b.confidenceScore - a.confidenceScore);
-    return safeCandidates[0];
+    validCandidates.sort((a, b) => b.confidenceScore - a.confidenceScore);
+    return validCandidates[0];
   }
 
   /**
