@@ -2319,92 +2319,14 @@ export class DeltaAutoTraderEngine {
     }
 
     // =========================================================================
-    // EARLY REVERSAL EXIT SYSTEM (0ms FAST CAPITAL SHIELD)
-    // User Directive: "after take trade and system get inform that trade may be reversal then its exit it faster"
-    // If trade is running and system detects a confirmed market reversal against the position,
-    // exit immediately with 0ms delay — banks early profit or cuts loss early (-$0.40 instead of -$2.50)!
+    // EARLY REVERSAL EXIT SYSTEM: PERMANENTLY DISABLED
+    // Premature early reversal exits were killing healthy trades on normal noise wicks
+    // at -$0.35 to -$0.45 before trades could reach the +$1.00 TP target or test -$0.55 SL.
+    // Positions are now managed strictly by:
+    // 1. Take Profit (TP) at +$1.00 USD
+    // 2. Hard Stop Loss (SL) capped at -$0.55 USD
+    // 3. Fast Breakeven locking at +$0.50 USD (+0.15 green lock)
     // =========================================================================
-    const tradeAgeMs = Date.now() - (pos.entryTime || 0);
-    // Allow at least 20 seconds of breathing room unless adverse loss exceeds -$0.90
-    if (tradeAgeMs >= 20000 || pos.pnlUSD <= -0.90) {
-      const cleanSym = (pos.symbol || '').toUpperCase().replace('USDT', 'USD');
-      const diag = this.lastDiagnostics.get(cleanSym) || this.lastDiagnostics.get(pos.symbol);
-      const quant = diag?.quantMath;
-
-      let isEarlyReversalDetected = false;
-      let reversalReason = '';
-
-      if (pos.side === 'SELL') {
-        // Holding SHORT: Bullish reversal threats
-        const hasAdversePrice = currentPrice > pos.entryPrice + Math.max(pos.atr * 0.50, pos.entryPrice * 0.0035);
-        const adverseQuantSide = this.state.isInverseTrading ? 'SELL' : 'BUY';
-        const isBullishQuantFlip = quant && hasAdversePrice && pos.pnlUSD <= -0.35 && (
-          (quant.recommendedSide === adverseQuantSide && (quant.quantScore >= 60 || (quant.scores?.totalBuyScore || 0) >= 60)) ||
-          (!this.state.isInverseTrading && quant.supportBounceConfirmed === true)
-        );
-        const waveValue = diag?.waveValue ?? 0;
-        const waveSignal = diag?.waveSignal ?? 0;
-        const rsi = diag?.rsi14 ?? 50;
-        const isBullishIndicatorReversal = hasAdversePrice && pos.pnlUSD <= -0.35 && (
-          (!this.state.isInverseTrading && diag?.readySignal === 'BUY') || 
-          (waveValue > waveSignal && waveValue > 0) || 
-          (rsi < 32)
-        );
-        const isBullishMicroReversal = quant && hasAdversePrice && pos.pnlUSD <= -0.35 && 
-          (quant.fisherTransform > quant.fisherSignal) && 
-          (quant.scores?.totalBuyScore || 0) >= 60;
-
-        if (isBullishQuantFlip) {
-          isEarlyReversalDetected = true;
-          reversalReason = `Quant Engine flipped to ${adverseQuantSide} with adverse price (Score: ${quant.quantScore}/100)`;
-        } else if (isBullishIndicatorReversal) {
-          isEarlyReversalDetected = true;
-          reversalReason = `Dedicated Strategy Bullish Reversal with adverse price (RSI: ${rsi.toFixed(1)}, Wave: ${waveValue.toFixed(1)})`;
-        } else if (isBullishMicroReversal) {
-          isEarlyReversalDetected = true;
-          reversalReason = `Fisher Bullish Cross with adverse momentum (+${quant.scores?.totalBuyScore} Buy pts)`;
-        }
-      } else if (pos.side === 'BUY') {
-        // Holding LONG: Bearish reversal threats
-        const hasAdversePrice = currentPrice < pos.entryPrice - Math.max(pos.atr * 0.50, pos.entryPrice * 0.0035);
-        const adverseQuantSide = this.state.isInverseTrading ? 'BUY' : 'SELL';
-        const isBearishQuantFlip = quant && hasAdversePrice && pos.pnlUSD <= -0.35 && (
-          (quant.recommendedSide === adverseQuantSide && (quant.quantScore >= 60 || (quant.scores?.totalSellScore || 0) >= 60)) ||
-          (!this.state.isInverseTrading && quant.resistanceRejectConfirmed === true)
-        );
-        const waveValue = diag?.waveValue ?? 0;
-        const waveSignal = diag?.waveSignal ?? 0;
-        const rsi = diag?.rsi14 ?? 50;
-        const isBearishIndicatorReversal = hasAdversePrice && pos.pnlUSD <= -0.35 && (
-          (!this.state.isInverseTrading && diag?.readySignal === 'SELL') || 
-          (waveValue < waveSignal && waveValue < 0) || 
-          (rsi > 68)
-        );
-        const isBearishMicroReversal = quant && hasAdversePrice && pos.pnlUSD <= -0.35 && 
-          (quant.fisherTransform < quant.fisherSignal) && 
-          (quant.scores?.totalSellScore || 0) >= 60;
-
-        if (isBearishQuantFlip) {
-          isEarlyReversalDetected = true;
-          reversalReason = `Quant Engine flipped to ${adverseQuantSide} with adverse price (Score: ${quant.quantScore}/100)`;
-        } else if (isBearishIndicatorReversal) {
-          isEarlyReversalDetected = true;
-          reversalReason = `Dedicated Strategy Bearish Reversal with adverse price (RSI: ${rsi.toFixed(1)}, Wave: ${waveValue.toFixed(1)})`;
-        } else if (isBearishMicroReversal) {
-          isEarlyReversalDetected = true;
-          reversalReason = `Fisher Bearish Cross with adverse momentum (+${quant.scores?.totalSellScore} Sell pts)`;
-        }
-      }
-
-      if (isEarlyReversalDetected) {
-        console.log(`⚡ [0MS FAST REVERSAL EXIT] ${pos.symbol} (${pos.side}): ${reversalReason} | PnL: $${pos.pnlUSD.toFixed(2)} USD. Exiting with 0ms delay to protect capital!`);
-        const targetIdx = this.state.activePositions.findIndex(p => p.id === pos.id);
-        if (targetIdx !== -1) {
-          await this.closePosition(targetIdx, 'REVERSAL_EXIT_EARLY', currentPrice);
-        }
-        return;
-      }
-    }
 
     // 1. Take Profit (TP) Check with ZERO MS DELAY (User Mandate: $1.00 USD target):
     // "hamara tp 1000 rupees hai to 1 dollar profit ek trade bohot haii aise target hit hona chaiyee"
