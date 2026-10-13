@@ -172,9 +172,9 @@ export const LiveTradeScoresSidebar: React.FC<LiveTradeScoresSidebarProps> = ({ 
           const regime = quant?.marketRegime || 'SCANNING';
           const isBuy = side === 'BUY';
           const isSell = side === 'SELL';
-          const isWait = side === 'WAIT' || !side;
-          const isTriggerArmed = score >= 50;
-          const isBuilding = score >= 35 && score < 50;
+          const EXECUTION_GATE = 60;
+          const isTriggerArmed = score >= EXECUTION_GATE;
+          const isBuilding = score >= 40 && score < EXECUTION_GATE;
           const isExpanded = expandedCoin === symbol;
           const price = diag?.price || 0;
           const superSmootherSlope = quant?.superSmootherSlope ?? 0;
@@ -266,11 +266,11 @@ export const LiveTradeScoresSidebar: React.FC<LiveTradeScoresSidebarProps> = ({ 
 
                 {/* Progress bar towards 70 execution gate */}
                 <div className="relative w-full h-2.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
-                  {/* Target 50 marker line */}
+                  {/* Target 60 marker line */}
                   <div 
                     className="absolute top-0 bottom-0 w-0.5 bg-amber-400 z-10" 
-                    style={{ left: '50%' }}
-                    title="Target Execution Gate (Score ≥ 50)"
+                    style={{ left: '60%' }}
+                    title="Target Execution Gate (Score ≥ 60)"
                   />
                   <div
                     className={`h-full transition-all duration-500 rounded-full ${
@@ -296,11 +296,11 @@ export const LiveTradeScoresSidebar: React.FC<LiveTradeScoresSidebarProps> = ({ 
                     {isTriggerArmed
                       ? '🎯 Target Reached! Armed for 15M Entry'
                       : isBuilding
-                      ? `⚡ Building Confluence (Need +${50 - score} pts)`
-                      : `⏳ Consolidation Chop (Need +${50 - score} pts)`}
+                      ? `⚡ Building Confluence (Need +${60 - score} pts)`
+                      : `⏳ Consolidation Chop (Need +${60 - score} pts)`}
                   </span>
                   <span className="text-slate-400">
-                    Gate: <strong>50</strong>
+                    Gate: <strong>60</strong>
                   </span>
                 </div>
               </div>

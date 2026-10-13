@@ -1480,7 +1480,7 @@ export class DeltaAutoTraderEngine {
         if (hasOpenPosition) {
           executionStatus = 'IN_TRADE';
           vetoReason = `In Active Position (${cleanDeltaSym})`;
-        } else if (mathVerdict.quantScore >= 45 && mathVerdict.recommendedSide) {
+        } else if (mathVerdict.quantScore >= 60 && mathVerdict.recommendedSide) {
           const recSide = mathVerdict.recommendedSide;
           if (recSide === 'SELL' && barColor === 'GREEN') {
             isVetoActive = true;
@@ -1495,12 +1495,12 @@ export class DeltaAutoTraderEngine {
             vetoReason = `All gates clear! Ready to execute ${recSide}.`;
             executionStatus = 'READY_TO_ENTER';
           }
-        } else if (mathVerdict.quantScore >= 35) {
+        } else if (mathVerdict.quantScore >= 40) {
           executionStatus = 'SCANNING_BUILDING';
-          vetoReason = `Math Score: ${mathVerdict.quantScore}/100 (Need ≥ 45 for execution).`;
+          vetoReason = `Math Score: ${mathVerdict.quantScore}/100 (Need ≥ 60 for execution).`;
         } else {
           executionStatus = 'WAIT';
-          vetoReason = `Market Consolidation: Score ${mathVerdict.quantScore}/100 (Need ≥ 45).`;
+          vetoReason = `Market Consolidation: Score ${mathVerdict.quantScore}/100 (Need ≥ 60).`;
         }
 
         if (evalResult && evalResult.diagnostics) {
