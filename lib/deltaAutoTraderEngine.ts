@@ -1426,8 +1426,8 @@ export class DeltaAutoTraderEngine {
           } catch (e) {}
         }
 
-        // Fetch 15M candles for entry indicators directly (250 bars for accurate 200 EMA)
-        const candles15m = await this.fetchCandles(symbol, '15m', 250);
+        // Fetch 15M candles for entry indicators directly (600 bars for accurate zero-bias 200 EMA)
+        const candles15m = await this.fetchCandles(symbol, '15m', 600);
         if (candles15m.length < 35) continue;
 
         const closedCandles15m = candles15m.slice(0, -1);

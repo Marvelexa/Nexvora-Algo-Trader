@@ -50,6 +50,7 @@ export class DeltaExchangeEngine {
   private products: Map<string, any> = new Map();
   private productIdMap: Map<number, any> = new Map();
   private productsFetchPromise: Promise<any[]> | null = null;
+  private obiRollingCache: Map<string, number[]> = new Map();
 
   constructor(config?: Partial<DeltaExchangeConfig>) {
     const isTestnet = config?.isTestnet ?? (process.env.DELTA_IS_TESTNET === 'true');
@@ -466,13 +467,19 @@ export class DeltaExchangeEngine {
       const orderbook = obRes.status === 'fulfilled' ? obRes.value : null;
       const trades = tradesRes.status === 'fulfilled' ? tradesRes.value : [];
 
-      // 1. Order Book Imbalance (OBI) across top 10 levels
+      // 1. Order Book Imbalance (OBI) across top 10 levels with rolling smoothing (filters single-tick spoofing)
       const buys = (orderbook?.buy || []).slice(0, 10);
       const sells = (orderbook?.sell || []).slice(0, 10);
       const bidVol = buys.reduce((sum: number, b: any) => sum + parseFloat(b.size || b.depth || 0), 0);
       const askVol = sells.reduce((sum: number, a: any) => sum + parseFloat(a.size || a.depth || 0), 0);
       const totalDepth = bidVol + askVol;
-      const obi = totalDepth > 0 ? (bidVol - askVol) / totalDepth : 0;
+      const rawObi = totalDepth > 0 ? (bidVol - askVol) / totalDepth : 0;
+
+      const prevObis = this.obiRollingCache.get(deltaSymbol) || [];
+      prevObis.push(rawObi);
+      if (prevObis.length > 5) prevObis.shift();
+      this.obiRollingCache.set(deltaSymbol, prevObis);
+      const obi = prevObis.reduce((a, b) => a + b, 0) / prevObis.length;
 
       // 2. Microprice & Spread
       const bestBid = parseFloat(ticker?.quotes?.best_bid || buys[0]?.price || '0');

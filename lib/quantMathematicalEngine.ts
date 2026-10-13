@@ -441,15 +441,15 @@ export class QuantMathematicalEngine {
     const lastEma50 = ema50[ema50.length - 1] || currentPrice;
     const lastEma200 = ema200[ema200.length - 1] || currentPrice;
 
+    // Macro Trend Hysteresis: Require price to clear EMA50 by at least 0.25 ATR to avoid knife-edge noise flipping
+    const trendBuffer = atr * 0.25;
     let macroTrend: 'BULLISH' | 'BEARISH' | 'SIDEWAYS' = 'SIDEWAYS';
-    if (currentPrice > lastEma50 && (lastEma50 >= lastEma200 || currentPrice > lastEma200)) {
+    if (currentPrice > lastEma50 + trendBuffer && (lastEma50 >= lastEma200 || currentPrice > lastEma200 + trendBuffer)) {
       macroTrend = 'BULLISH';
-    } else if (currentPrice < lastEma50 && (lastEma50 <= lastEma200 || currentPrice < lastEma200)) {
+    } else if (currentPrice < lastEma50 - trendBuffer && (lastEma50 <= lastEma200 || currentPrice < lastEma200 - trendBuffer)) {
       macroTrend = 'BEARISH';
-    } else if (lastEma50 < lastEma200 && currentPrice < lastEma200) {
-      macroTrend = 'BEARISH';
-    } else if (lastEma50 > lastEma200 && currentPrice > lastEma200) {
-      macroTrend = 'BULLISH';
+    } else {
+      macroTrend = 'SIDEWAYS';
     }
 
     const window = candles.slice(Math.max(0, n - 40));
@@ -475,12 +475,7 @@ export class QuantMathematicalEngine {
         pivotHighs.push(c.high);
       }
     }
-
-    if (lastEma50 < currentPrice) pivotLows.push(lastEma50);
-    else pivotHighs.push(lastEma50);
-
-    if (lastEma200 < currentPrice) pivotLows.push(lastEma200);
-    else pivotHighs.push(lastEma200);
+    // Genuine price swing pivots are strictly preserved; EMA50 is not double-counted as a price pivot!
 
     // Zone is defined as pivot +/- 0.35 ATR
     const zoneBuffer = atr * 0.35;
