@@ -679,11 +679,14 @@ export class QuantMathematicalEngine {
     // TTM Squeeze
     const squeeze = this.isTTMSqueeze(candles);
 
+    // Nexvora Quantum Future Momentum Predictor [Original v1] (d²P/dt² Zero-Lag Acceleration)
+    const nexPredict = CryptoDedicatedStrategyEngine.evaluateNexvoraQuantumFuturePredictor(candles);
+
     // -------------------------------------------------------------------------
     // STEP 3: VOTE BY SIGNAL GROUP (1 Vote Per Group, Max 100 Points)
     // -------------------------------------------------------------------------
     let buyA = 0, sellA = 0;   // Group A: Trend (Max 20)
-    let buyB = 0, sellB = 0;   // Group B: Mean-Reversion (Max 20)
+    let buyB = 0, sellB = 0;   // Group B: Mean-Reversion / Predictive Turns (Max 20)
     let buyC = 0, sellC = 0;   // Group C: Volatility (Max 10)
     let buyD = 0, sellD = 0;   // Group D: Structure (Max 20)
     let buyE = 0, sellE = 0;   // Group E: Order Flow (Max 20)
@@ -695,58 +698,41 @@ export class QuantMathematicalEngine {
     const isMacroBullish = sr.macroTrend === 'BULLISH' || (sr.macroTrend !== 'BEARISH' && currentPrice > sr.ema50);
 
     // -------------------------------------------------------------------------
-    // GROUP A: TREND / MOMENTUM (Max 20 pts)
+    // GROUP A: TREND & ZERO-LAG PREDICTIVE MOMENTUM (Max 20 pts)
+    // Anchored on 50/200 EMA + SuperSmoother Slope + Nexvora Quantum Predictive Wave
     // -------------------------------------------------------------------------
-    // In TREND regime: directional momentum points. In RANGE regime: edge touches & local momentum.
     const priceVsEma50Pct = ((currentPrice - sr.ema50) / (sr.ema50 || 1)) * 100;
     const isLastBarGreen = lastBar.close > lastBar.open;
     const isLastBarRed = lastBar.close < lastBar.open;
-    const greenBodyRatio = rangeLast > 0 ? (lastBar.close - lastBar.open) / rangeLast : 0;
-    const redBodyRatio = rangeLast > 0 ? (lastBar.open - lastBar.close) / rangeLast : 0;
 
-    if (marketRegime === 'TREND') {
-      // 1. 50/200 EMA Bias Filter
-      if (priceVsEma50Pct > 0.05 && currentPrice >= sr.ema50) {
-        if (superSmootherSlope >= -0.015 && (!isLastBarRed || redBodyRatio < 0.4)) {
-          buyA += 10;
-          reasons.push('Trend Bias > EMA50 (+10 A)');
-        }
-      } else if (priceVsEma50Pct < -0.05 && currentPrice <= sr.ema50) {
-        // Only award SELL bias if candle is NOT strongly bouncing green!
-        if (!isLastBarGreen || greenBodyRatio < 0.35) {
-          sellA += 10;
-          reasons.push('Trend Bias < EMA50 (+10 A)');
-        }
+    // 1. 50/200 EMA Trend Bias
+    if (priceVsEma50Pct > 0.05 && currentPrice >= sr.ema50) {
+      if (superSmootherSlope >= -0.015) {
+        buyA += 10;
+        reasons.push('Trend Bias > EMA50 (+10 A)');
       }
-
-      // 2. SuperSmoother 2-Pole Slope & Reversal Momentum
-      if (superSmootherSlope > 0.015 && currentPrice >= currentSmooth && !isLastBarRed) {
-        buyA += 10;
-        reasons.push(`SuperSmoother Uptrend (+${superSmootherSlope.toFixed(3)}%) (+10 A)`);
-      } else if (superSmootherSlope < -0.015 && (!isLastBarGreen || greenBodyRatio < 0.35)) {
+    } else if (priceVsEma50Pct < -0.05 && currentPrice <= sr.ema50) {
+      if (superSmootherSlope <= 0.015) {
         sellA += 10;
-        reasons.push(`SuperSmoother Downtrend (${superSmootherSlope.toFixed(3)}%) (+10 A)`);
-      } else if (currentPrice >= sr.ema50 && isLastBarGreen && (sr.supportBounceConfirmed || (sr.isAtSupport && lowerWickLast / rangeLast >= 0.20) || currentPrice >= kalmanEstimate || greenBodyRatio >= 0.40 || lastBar.close > prevBar.high)) {
-        // Bullish bounce momentum: only valid when NOT in macro downtrend (< ema50)
-        buyA += 10;
-        reasons.push('Bullish Green Momentum Thrust (+10 A)');
-      } else if (isLastBarRed && (sr.resistanceRejectConfirmed || (sr.isAtResistance && upperWickLast / rangeLast >= 0.20) || currentPrice <= kalmanEstimate || redBodyRatio >= 0.40 || lastBar.close < prevBar.low || currentPrice <= sr.ema50)) {
-        sellA += 10;
-        reasons.push('Bearish Red Momentum Thrust (+10 A)');
-      }
-    } else {
-      // In RANGE regime: local bias and edge touches
-      if (superSmootherSlope > 0.015 && !isLastBarRed) buyA += 5;
-      else if (superSmootherSlope < -0.015 && !isLastBarGreen) sellA += 5;
-
-      if ((sr.resistanceRejectConfirmed || (sr.isAtResistance && (isLastBarRed || upperWickLast / rangeLast >= 0.20))) && !sr.isAtSupport) {
-        sellA += 10;
-        reasons.push('Resistance Rejection at Range High (+10 A)');
-      } else if ((sr.supportBounceConfirmed || (sr.isAtSupport && (isLastBarGreen || lowerWickLast / rangeLast >= 0.20))) && !sr.isAtResistance) {
-        buyA += 10;
-        reasons.push('Support Bounce at Range Low (+10 A)');
+        reasons.push('Trend Bias < EMA50 (+10 A)');
       }
     }
+
+    // 2. Nexvora Quantum Predictive Wave & Acceleration Momentum (d²P/dt²)
+    if (nexPredict.scaledWave > nexPredict.scaledSignal && nexPredict.scaledHist > 0) {
+      buyA += 10;
+      reasons.push(`Nexvora Predictive Wave Bullish Momentum (Wave: ${nexPredict.scaledWave.toFixed(1)} > Sig, Hist: +${nexPredict.scaledHist.toFixed(1)}) (+10 A)`);
+    } else if (nexPredict.scaledWave < nexPredict.scaledSignal && nexPredict.scaledHist < 0) {
+      sellA += 10;
+      reasons.push(`Nexvora Predictive Wave Bearish Momentum (Wave: ${nexPredict.scaledWave.toFixed(1)} < Sig, Hist: ${nexPredict.scaledHist.toFixed(1)}) (+10 A)`);
+    } else if (superSmootherSlope > 0.015 && currentPrice >= currentSmooth) {
+      buyA += 5;
+      reasons.push(`SuperSmoother Uptrend (+${superSmootherSlope.toFixed(3)}%) (+5 A)`);
+    } else if (superSmootherSlope < -0.015) {
+      sellA += 5;
+      reasons.push(`SuperSmoother Downtrend (${superSmootherSlope.toFixed(3)}%) (+5 A)`);
+    }
+
     if (dedicatedSignal?.side === 'BUY') {
       sellA = 0;
       buyA = Math.max(buyA, 15);
@@ -760,50 +746,33 @@ export class QuantMathematicalEngine {
     sellA = Math.min(20, sellA);
 
     // -------------------------------------------------------------------------
-    // GROUP B: MEAN-REVERSION / OSCILLATORS (Max 20 pts)
+    // GROUP B: PREDICTIVE TURNING POINTS & DIVERGENCES (Max 20 pts)
+    // Nexvora Quantum Future Predictor Turning Points + Divergences + Fisher Extremes
     // -------------------------------------------------------------------------
-    const isReversalUp = isLastBarGreen || isFisherBullishCross || isRsiBullishReclaim;
-    const isReversalDown = isLastBarRed || isFisherBearishCross || isRsiBearishReclaim;
-
-    // 1. Extreme RSI & Mean-Reversion / Trend Momentum Rules:
-    if (currentRsi <= 32 || zScore <= -1.20) {
-      if (isLastBarGreen && !isMacroBearish && (sr.supportBounceConfirmed || isFisherBullishCross || sr.isAtSupport)) {
-        // Confirmed bounce at support in oversold territory -> BUY (only if NOT macro bearish)
-        buyB = Math.max(buyB, 15);
-        sellB = 0;
-        reasons.push(`Oversold Support Bounce Confirmed (RSI: ${currentRsi.toFixed(1)}, Z-Score: ${zScore.toFixed(2)}) (+15 B BUY)`);
-      } else if (isLastBarRed || sr.supportBreakConfirmed || priceVsEma50Pct < -0.05 || isMacroBearish) {
-        // Trend Momentum Breakdown / Dump -> SELL
-        sellA = Math.max(sellA, 15);
-        sellB = Math.max(sellB, 10);
-        buyB = 0;
-        reasons.push(`Trend Momentum Breakdown Dump (RSI: ${currentRsi.toFixed(1)}, Z-Score: ${zScore.toFixed(2)}) (+15 A / +10 B SELL)`);
-      }
-    } else if (currentRsi >= 68 || zScore >= 1.20) {
-      if (isLastBarRed && !isMacroBullish && (sr.resistanceRejectConfirmed || isFisherBearishCross || sr.isAtResistance)) {
-        // Confirmed rejection at resistance in overbought territory -> SELL (only if NOT macro bullish)
-        sellB = Math.max(sellB, 15);
-        buyB = 0;
-        reasons.push(`Overbought Resistance Rejection Confirmed (RSI: ${currentRsi.toFixed(1)}, Z-Score: +${zScore.toFixed(2)}) (+15 B SELL)`);
-      } else if (isLastBarGreen || sr.resistanceBreakConfirmed || priceVsEma50Pct > 0.05 || isMacroBullish) {
-        // Trend Momentum Breakout Rally -> BUY
-        buyA = Math.max(buyA, 15);
-        buyB = Math.max(buyB, 10);
-        sellB = 0;
-        reasons.push(`Trend Momentum Breakout Rally (RSI: ${currentRsi.toFixed(1)}, Z-Score: +${zScore.toFixed(2)}) (+15 A / +10 B BUY)`);
-      }
+    if (nexPredict.bullishDiv) {
+      buyB = 20;
+      reasons.push('Nexvora 🔮 FUTURE PUMP: Leading Bullish Divergence on Predictive Wave (+20 B BUY)');
+    } else if (nexPredict.bearishDiv) {
+      sellB = 20;
+      reasons.push('Nexvora 🔮 FUTURE DUMP: Leading Bearish Divergence on Predictive Wave (+20 B SELL)');
+    } else if (nexPredict.predictUp) {
+      buyB = Math.max(buyB, 15);
+      reasons.push('Nexvora 🚀 Future UP Wave Triggered: Acceleration turning up before price (+15 B BUY)');
+    } else if (nexPredict.predictDown) {
+      sellB = Math.max(sellB, 15);
+      reasons.push('Nexvora ⚠️ Future DOWN Wave Triggered: Acceleration turning down before price (+15 B SELL)');
     }
 
-    // 2. Fisher Transform Reversal Cross from Extreme
+    // 2. Fisher Transform & Extreme Reversal Confirmation
     if (isFisherBullishCross && currentFisher <= -0.50 && !sr.supportBreakConfirmed) {
-      buyB += 10;
+      buyB = Math.max(buyB, 10);
       reasons.push(`Fisher Extreme Bullish Cross (F:${currentFisher.toFixed(2)}) (+10 B)`);
     } else if (isFisherBearishCross && currentFisher >= 0.50 && !sr.resistanceBreakConfirmed) {
-      sellB += 10;
+      sellB = Math.max(sellB, 10);
       reasons.push(`Fisher Extreme Bearish Cross (F:${currentFisher.toFixed(2)}) (+10 B)`);
     }
 
-    // 3. RSI Reclaim (dipped below 35 and closed back above 35, or peaked above 65 and closed below 65)
+    // 3. RSI Reclaim
     if (isRsiBullishReclaim && !sr.supportBreakConfirmed) {
       buyB += 5;
       reasons.push(`RSI Bullish Reclaim (${currentRsi.toFixed(1)} > 35) (+5 B)`);

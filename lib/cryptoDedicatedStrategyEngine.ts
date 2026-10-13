@@ -359,6 +359,214 @@ export class CryptoDedicatedStrategyEngine {
   }
 
   /**
+   * Nexvora Quantum Future Momentum Predictor [Original v1] (NEX-PREDICT)
+   * Direct TypeScript port of Pine Script v6:
+   * Zero-Lag Acceleration (d²P/dt²) physics to predict turning points 1-2 bars in advance.
+   */
+  public static evaluateNexvoraQuantumFuturePredictor(
+    candles: KlinePoint[],
+    fastLength: number = 8,
+    slowLength: number = 21,
+    signalLength: number = 9,
+    accelSens: number = 1.5,
+    obLevel: number = 55,
+    osLevel: number = -55,
+    divLookback: number = 5
+  ): {
+    predictUp: boolean;
+    predictDown: boolean;
+    bullishDiv: boolean;
+    bearishDiv: boolean;
+    scaledWave: number;
+    scaledSignal: number;
+    scaledHist: number;
+    prevScaledWave: number;
+    prevScaledSignal: number;
+    signal: 'BUY' | 'SELL' | null;
+    futureAlert: 'FUTURE_PUMP' | 'FUTURE_DUMP' | null;
+    reason: string;
+  } {
+    const len = candles.length;
+    if (len < slowLength + 10) {
+      return {
+        predictUp: false,
+        predictDown: false,
+        bullishDiv: false,
+        bearishDiv: false,
+        scaledWave: 0,
+        scaledSignal: 0,
+        scaledHist: 0,
+        prevScaledWave: 0,
+        prevScaledSignal: 0,
+        signal: null,
+        futureAlert: null,
+        reason: 'Insufficient candle data for predictive wave',
+      };
+    }
+
+    const closes = candles.map(c => c.close);
+    const highs = candles.map(c => c.high);
+    const lows = candles.map(c => c.low);
+
+    // 1. Zero-Lag EMA calculations: Removes standard indicator delay
+    const fastZ = this.calculateZLEMA(closes, fastLength);
+    const slowZ = this.calculateZLEMA(closes, slowLength);
+
+    // 2. Price velocity (First Derivative: dP/dt)
+    const priceVelocity: number[] = new Array(len);
+    for (let i = 0; i < len; i++) {
+      priceVelocity[i] = (fastZ[i] || closes[i]) - (slowZ[i] || closes[i]);
+    }
+
+    // 3. Price Acceleration (Second Derivative: d²P/dt²) -> PREDICTS TURNS BEFORE PRICE
+    const priceAcceleration: number[] = new Array(len);
+    for (let i = 0; i < len; i++) {
+      const prevVel = i > 0 ? priceVelocity[i - 1] : priceVelocity[0];
+      priceAcceleration[i] = (priceVelocity[i] - prevVel) * accelSens;
+    }
+
+    // 4. Quantum Predictive Momentum Wave
+    const rawPredictiveWave: number[] = new Array(len);
+    for (let i = 0; i < len; i++) {
+      rawPredictiveWave[i] = priceVelocity[i] + priceAcceleration[i];
+    }
+
+    const predictiveWave = this.calculateEMA(rawPredictiveWave, 3);
+    const signalLine = this.calculateEMA(predictiveWave, signalLength);
+
+    // 5. Normalization (-100 to +100 Scale for clean oscillation)
+    // normHighest = ta.highest(math.abs(predictiveWave), 50)
+    const absWave = predictiveWave.map(w => Math.abs(w));
+    const scaledWaveArr: number[] = new Array(len);
+    const scaledSignalArr: number[] = new Array(len);
+    const scaledHistArr: number[] = new Array(len);
+
+    for (let i = 0; i < len; i++) {
+      const start = Math.max(0, i - 49);
+      let maxAbs = 0;
+      for (let j = start; j <= i; j++) {
+        if (absWave[j] > maxAbs) maxAbs = absWave[j];
+      }
+      const normScale = maxAbs > 0 ? (100.0 / maxAbs) : 1.0;
+      scaledWaveArr[i] = predictiveWave[i] * normScale;
+      scaledSignalArr[i] = signalLine[i] * normScale;
+      scaledHistArr[i] = (predictiveWave[i] - signalLine[i]) * normScale;
+    }
+
+    const lastIdx = len - 1;
+    const currScaledWave = scaledWaveArr[lastIdx];
+    const prevScaledWave = scaledWaveArr[lastIdx - 1];
+    const prev2ScaledWave = scaledWaveArr[lastIdx - 2];
+
+    const currScaledSig = scaledSignalArr[lastIdx];
+    const prevScaledSig = scaledSignalArr[lastIdx - 1];
+
+    const currScaledHist = scaledHistArr[lastIdx];
+
+    // 6. Predictive Turning Point Logic (Future Signals)
+    // 1. Future UP Trigger: Momentum curve curves upwards while in oversold zone or crossing up
+    const waveCrossoverUp = prevScaledWave <= prevScaledSig && currScaledWave > currScaledSig;
+    const waveTurnsUp = currScaledWave > prevScaledWave && prevScaledWave <= prev2ScaledWave;
+    const predictUp = (waveCrossoverUp && currScaledWave < 30) || (waveTurnsUp && currScaledWave <= osLevel);
+
+    // 2. Future DOWN Trigger: Momentum curve curves downwards from overbought zone or crossing down
+    const waveCrossoverDown = prevScaledWave >= prevScaledSig && currScaledWave < currScaledSig;
+    const waveTurnsDown = currScaledWave < prevScaledWave && prevScaledWave >= prev2ScaledWave;
+    const predictDown = (waveCrossoverDown && currScaledWave > -30) || (waveTurnsDown && currScaledWave >= obLevel);
+
+    // 7. Leading Divergence Detection (Predicts Reversals)
+    let lastWaveLow = NaN;
+    let lastPriceLow = NaN;
+    let bullishDiv = false;
+
+    let lastWaveHigh = NaN;
+    let lastPriceHigh = NaN;
+    let bearishDiv = false;
+
+    for (let i = divLookback * 2; i <= lastIdx; i++) {
+      const pivotIdx = i - divLookback;
+      const targetWave = scaledWaveArr[pivotIdx];
+      const targetPriceLow = lows[pivotIdx];
+      const targetPriceHigh = highs[pivotIdx];
+
+      // Check pivot low
+      let isPL = true;
+      for (let k = pivotIdx - divLookback; k <= pivotIdx + divLookback; k++) {
+        if (k !== pivotIdx && scaledWaveArr[k] <= targetWave) {
+          isPL = false;
+          break;
+        }
+      }
+
+      if (isPL) {
+        if (!isNaN(lastWaveLow) && targetWave > lastWaveLow && targetPriceLow < lastPriceLow) {
+          if (i >= lastIdx - 2) {
+            bullishDiv = true;
+          }
+        }
+        lastWaveLow = targetWave;
+        lastPriceLow = targetPriceLow;
+      }
+
+      // Check pivot high
+      let isPH = true;
+      for (let k = pivotIdx - divLookback; k <= pivotIdx + divLookback; k++) {
+        if (k !== pivotIdx && scaledWaveArr[k] >= targetWave) {
+          isPH = false;
+          break;
+        }
+      }
+
+      if (isPH) {
+        if (!isNaN(lastWaveHigh) && targetWave < lastWaveHigh && targetPriceHigh > lastPriceHigh) {
+          if (i >= lastIdx - 2) {
+            bearishDiv = true;
+          }
+        }
+        lastWaveHigh = targetWave;
+        lastPriceHigh = targetPriceHigh;
+      }
+    }
+
+    let signal: 'BUY' | 'SELL' | null = null;
+    let futureAlert: 'FUTURE_PUMP' | 'FUTURE_DUMP' | null = null;
+    let reason = '';
+
+    if (bullishDiv) {
+      signal = 'BUY';
+      futureAlert = 'FUTURE_PUMP';
+      reason = `[NEX-PREDICT] 🔮 FUTURE PUMP: Bullish Divergence on Predictive Wave (Wave: ${currScaledWave.toFixed(1)}, Hist: ${currScaledHist.toFixed(1)})`;
+    } else if (bearishDiv) {
+      signal = 'SELL';
+      futureAlert = 'FUTURE_DUMP';
+      reason = `[NEX-PREDICT] 🔮 FUTURE DUMP: Bearish Divergence on Predictive Wave (Wave: ${currScaledWave.toFixed(1)}, Hist: ${currScaledHist.toFixed(1)})`;
+    } else if (predictUp) {
+      signal = 'BUY';
+      reason = `[NEX-PREDICT] 🚀 Future UP Wave: ${waveCrossoverUp ? 'Crossover Up (<30)' : 'Turning Up in Oversold (<=' + osLevel + ')'} (Wave: ${currScaledWave.toFixed(1)})`;
+    } else if (predictDown) {
+      signal = 'SELL';
+      reason = `[NEX-PREDICT] ⚠️ Future DOWN Wave: ${waveCrossoverDown ? 'Crossover Down (>-30)' : 'Turning Down in Overbought (>=' + obLevel + ')'} (Wave: ${currScaledWave.toFixed(1)})`;
+    } else {
+      reason = `[NEX-PREDICT] Scanning Predictive Wave (${currScaledWave.toFixed(1)} / Sig: ${currScaledSig.toFixed(1)})`;
+    }
+
+    return {
+      predictUp,
+      predictDown,
+      bullishDiv,
+      bearishDiv,
+      scaledWave: parseFloat(currScaledWave.toFixed(2)),
+      scaledSignal: parseFloat(currScaledSig.toFixed(2)),
+      scaledHist: parseFloat(currScaledHist.toFixed(2)),
+      prevScaledWave: parseFloat(prevScaledWave.toFixed(2)),
+      prevScaledSignal: parseFloat(prevScaledSig.toFixed(2)),
+      signal,
+      futureAlert,
+      reason,
+    };
+  }
+
+  /**
    * Institutional Candle Classification (Bidirectional: BUY & SELL):
    * Requires Bullish/Bearish Engulfing, Hammer/Shooting Star, or Power Bar (body >= 45% of total candle range)
    */
@@ -3236,8 +3444,10 @@ export class CryptoDedicatedStrategyEngine {
   public evaluateSymbol(symbol: string, candles: KlinePoint[]): StrategySignalResult {
     const res = this.evaluateSymbolInternal(symbol, candles);
     const confluence = CryptoDedicatedStrategyEngine.evaluateInstitutionalConfluence(candles);
+    const nexPredict = CryptoDedicatedStrategyEngine.evaluateNexvoraQuantumFuturePredictor(candles);
 
     if (res.diagnostics) {
+      res.diagnostics.nexPredict = nexPredict;
       res.diagnostics.emaRibbon = {
         ema20: confluence.ema20,
         ema50: confluence.ema50,
@@ -3246,6 +3456,20 @@ export class CryptoDedicatedStrategyEngine {
       res.diagnostics.rsi14 = confluence.rsi14;
       res.diagnostics.isTrendBullish = confluence.isMacroBullish;
       res.diagnostics.trend100Ema = confluence.ema200;
+    }
+
+    // Predictive Momentum Foresight (Nexvora Quantum Future Predictor):
+    // If dedicated coin strategy has no active cross, let NEX-PREDICT future waves/divergences lead execution
+    if (!res.signal && nexPredict.signal) {
+      res.signal = nexPredict.signal;
+      res.strategyName = 'Nexvora Quantum Future Momentum Predictor [NEX-PREDICT]';
+      res.reason = nexPredict.reason;
+      if (res.diagnostics) {
+        res.diagnostics.readySignal = nexPredict.signal;
+        res.diagnostics.signalReason = nexPredict.reason;
+        res.diagnostics.waveValue = nexPredict.scaledWave;
+        res.diagnostics.waveSignal = nexPredict.scaledSignal;
+      }
     }
 
     if (!res.signal) {

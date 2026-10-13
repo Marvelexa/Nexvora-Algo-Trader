@@ -226,6 +226,7 @@ export interface AssetDiagnostics {
   bbMiddle?: number;
   waveValue?: number;
   waveSignal?: number;
+  nexPredict?: any;
   emaRibbon?: { ema20: number; ema50: number; ema100: number };
   atr: number;
   armedBarsRemaining: number;
