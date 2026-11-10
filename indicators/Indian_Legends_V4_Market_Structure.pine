@@ -1,0 +1,346 @@
+//@version=5
+indicator("🇮🇳 Indian Legends V4 [Market Support SL/TP & Zero-Miss Trend Sniper]", shorttitle="🇮🇳 Legends V4 [Structure]", overlay=true, max_labels_count=500, max_lines_count=500)
+
+// ============================================================================
+// 1. INPUTS & ENGINE CONFIGURATION
+// ============================================================================
+grp_market_sl = "🛡️ Market-Structure SL & Dynamic Trailing (NO Fixed Numbers!)"
+slMode          = input.string("Market Support / Swing Low", "Stop Loss Anchored To", options=["Market Support / Swing Low", "Dynamic 9/20 EMA Support", "Candle Low/High Structure"], group=grp_market_sl)
+swingLookback   = input.int(3, "Swing Support Lookback (Bars)", minval=1, maxval=10, group=grp_market_sl)
+slBufferPoints  = input.float(3.0, "Support Buffer Cushion (Points/Ticks)", minval=0.0, step=0.5, tooltip="Extra safety margin placed BELOW actual market support to protect against stop-hunts / wicks", group=grp_market_sl)
+
+tpMode          = input.string("Market Support Trailing (Ride Big Trends!)", "Exit / Target Mode", options=["Market Support Trailing (Ride Big Trends!)", "Structure R:R (1:1.5 & 1:2.5)", "Next Pivot / PDH / PDL Resistance", "Hybrid (Partial TP + Trail Remainder)"], group=grp_market_sl)
+trailMethod     = input.string("Trailing EMA 9/20 Support", "Trailing Stop Mode", options=["Trailing EMA 9/20 Support", "Candle-by-Candle Low Support (Ghanshyam Style)", "Swing Structure Trail"], group=grp_market_sl)
+rrRatio         = input.float(2.0, "Risk:Reward Multiplier (When R:R Mode Active)", minval=1.0, maxval=5.0, step=0.25, group=grp_market_sl)
+
+grp_strat = "🏆 Opportunity Engines (Zero-Miss Setup Suite)"
+useEmaBounce    = input.bool(true, "1. Ghanshyam 9/20 EMA Support Bounce (Captures Trend Rides!)", group=grp_strat)
+useFastBreakout = input.bool(true, "2. Aggressive Momentum Rocket Breakout (Zero-Miss)", group=grp_strat)
+useGhanshyamIB  = input.bool(true, "3. Ghanshyam Inside Bar & Momentum Blast", group=grp_strat)
+useBoomingCPR   = input.bool(true, "4. CPR & VWAP Institutional Support/Resistance", group=grp_strat)
+usePos5Ema      = input.bool(true, "5. Subasish 5 EMA Reversal Sniper (Tops & Bottoms)", group=grp_strat)
+useDayHighBreak = input.bool(true, "6. Day High / Day Low Structural Breakout", group=grp_strat)
+
+grp_exec = "⚡ Execution & Opportunity Multiplier"
+allowContinuation = input.bool(true, "Show Continuation & Add-On Signals In Trends", tooltip="Generates RE-ENTRY signals when price bounces off EMA support during an existing trend so you never miss consecutive rallies", group=grp_exec)
+cooldownBars      = input.int(0, "Cooldown Bars After Exit (Set to 0 for Zero-Miss!)", minval=0, maxval=10, group=grp_exec)
+sessionTime       = input.session("0915-1525", "Indian Market Trading Session (IST)", group=grp_exec)
+
+// ============================================================================
+// 2. INDICATORS & MARKET STRUCTURE CALCULATIONS
+// ============================================================================
+ema5    = ta.ema(close, 5)
+ema9    = ta.ema(close, 9)
+ema20   = ta.ema(close, 20)
+ema50   = ta.ema(close, 50)
+ema200  = ta.ema(close, 200)
+vwapVal = ta.vwap(hlc3)
+atrVal  = ta.atr(14)
+
+// Previous Day Levels & Daily CPR (Non-Repainting Security Call)
+[pdh, pdl, pdc] = request.security(syminfo.tickerid, "D", [high[1], low[1], close[1]], lookahead=barmerge.lookahead_off)
+cprPivot = (pdh + pdl + pdc) / 3.0
+cprBC    = (pdh + pdl) / 2.0
+cprTC    = (cprPivot - cprBC) + cprPivot
+cprTop   = math.max(cprTC, cprBC)
+cprBot   = math.min(cprTC, cprBC)
+pivotR1  = 2 * cprPivot - pdl
+pivotS1  = 2 * cprPivot - pdh
+pivotR2  = cprPivot + (pdh - pdl)
+pivotS2  = cprPivot - (pdh - pdl)
+
+// Intraday Day High and Day Low
+var float intradayHigh = na
+var float intradayLow  = na
+isNewDay = ta.change(time("D")) != 0
+
+if isNewDay
+    intradayHigh := high
+    intradayLow  := low
+else
+    intradayHigh := math.max(nz(intradayHigh, high), high)
+    intradayLow  := math.min(nz(intradayLow, low), low)
+
+candleRange = math.max(high - low, syminfo.mintick)
+bodySize    = math.abs(close - open)
+isGreen     = close > open
+isRed       = close < open
+
+inSession = not na(time(timeframe.period, sessionTime, "Asia/Kolkata"))
+
+// Dynamic Market Support / Resistance Detection
+swingLowVal  = ta.lowest(low, swingLookback)
+swingHighVal = ta.highest(high, swingLookback)
+emaSupport   = math.min(ema9, ema20)
+emaResist    = math.max(ema9, ema20)
+
+// ============================================================================
+// 3. ZERO-MISS ENTRY CONDITIONS
+// ============================================================================
+
+// 1. Ghanshyam 9/20 EMA Pullback & Support Bounce (The engine that catches trend rides!)
+// Price dips into EMA 9/20 support zone, holds, and surges back up
+emaBounceBuy  = useEmaBounce and close > ema50 and (low <= ema9 * 1.002 or low <= ema20 * 1.002) and isGreen and close > ema9 and close > open
+emaBounceSell = useEmaBounce and close < ema50 and (high >= ema9 * 0.998 or high >= ema20 * 0.998) and isRed and close < ema9 and close < open
+
+// 2. Fast Momentum Rocket Breakout (Captures big impulsive green/red bars instantly)
+fastBuy  = useFastBreakout and isGreen and bodySize >= candleRange * 0.58 and close > high[1] and close > ema20
+fastSell = useFastBreakout and isRed and bodySize >= candleRange * 0.58 and close < low[1] and close < ema20
+
+// 3. Ghanshyam Inside Bar & Momentum Blast
+isInsideBar   = high[1] <= high[2] and low[1] >= low[2]
+ghanshyamBuy  = useGhanshyamIB and isInsideBar and isGreen and close > high[1]
+ghanshyamSell = useGhanshyamIB and isInsideBar and isRed and close < low[1]
+
+// 4. Booming CPR & VWAP Institutional Bounce
+boomingBuy  = useBoomingCPR and ((low <= cprTop * 1.002 and close > cprTop) or (low <= vwapVal * 1.001 and close > vwapVal)) and isGreen
+boomingSell = useBoomingCPR and ((high >= cprBot * 0.998 and close < cprBot) or (high >= vwapVal * 0.999 and close < vwapVal)) and isRed
+
+// 5. Subasish 5-EMA Sniper (Extreme Tops & Bottoms Reversals)
+posAlertSell = low[1] > ema5[1]
+pos5EmaSell  = usePos5Ema and posAlertSell and isRed and close < low[1]
+posAlertBuy  = high[1] < ema5[1]
+pos5EmaBuy   = usePos5Ema and posAlertBuy and isGreen and close > high[1]
+
+// 6. Day High / Day Low Structural Breakout
+dayHighBreak = useDayHighBreak and close > intradayHigh[1] and isGreen and close > ema20
+dayLowBreak  = useDayHighBreak and close < intradayLow[1] and isRed and close < ema20
+
+// Combined Primary Signals
+rawBuy  = emaBounceBuy or fastBuy or ghanshyamBuy or boomingBuy or pos5EmaBuy or dayHighBreak
+rawSell = emaBounceSell or fastSell or ghanshyamSell or boomingSell or pos5EmaSell or dayLowBreak
+
+// Determine Setup Name
+getSetupName(isLong) =>
+    if isLong
+        dayHighBreak ? "Day High Break" : emaBounceBuy ? "EMA Support Bounce" : fastBuy ? "Rocket Breakout" : ghanshyamBuy ? "Inside Bar Blast" : boomingBuy ? "CPR/VWAP Bounce" : "5-EMA Sniper"
+    else
+        dayLowBreak ? "Day Low Breakdown" : emaBounceSell ? "EMA Resistance Drop" : fastSell ? "Rocket Breakdown" : ghanshyamSell ? "Inside Bar Drop" : boomingSell ? "CPR/VWAP Reject" : "5-EMA Top"
+
+// ============================================================================
+// 4. MARKET-STRUCTURE SL / TP & STATE MACHINE (NO FIXED ATR CUTOFFS!)
+// ============================================================================
+var int   activeSide     = 0       // 1 = Long, -1 = Short, 0 = Flat
+var float entryPrice     = na
+var float currentSL      = na
+var float targetPrice    = na
+var float marketFloorSL  = na
+var string activeSetup   = ""
+var int   lastExitBar    = -999
+var float partialTpPrice = na
+var bool  partialBooked  = false
+
+var int   totalWins      = 0
+var int   totalLosses    = 0
+var float totalPts       = 0.0
+
+// Helper function to calculate actual Market Structure Support SL
+calcMarketSupportSL(isLong) =>
+    float sup = na
+    if isLong
+        if slMode == "Market Support / Swing Low"
+            sup := swingLowVal - slBufferPoints
+        else if slMode == "Dynamic 9/20 EMA Support"
+            sup := math.min(emaSupport, low) - slBufferPoints
+        else // Candle Low
+            sup := math.min(low, low[1]) - slBufferPoints
+    else
+        if slMode == "Market Support / Swing Low"
+            sup := swingHighVal + slBufferPoints
+        else if slMode == "Dynamic 9/20 EMA Support"
+            sup := math.max(emaResist, high) + slBufferPoints
+        else // Candle High
+            sup := math.max(high, high[1]) + slBufferPoints
+    sup
+
+// Helper function to calculate Target based on Market Resistance / Structure
+calcMarketTarget(isLong, ent, sl) =>
+    float tp = na
+    risk = math.abs(ent - sl)
+    if isLong
+        if tpMode == "Market Support Trailing (Ride Big Trends!)"
+            tp := ent + (risk * 10.0) // Open sky target; trailed strictly by market support!
+        else if tpMode == "Next Pivot / PDH / PDL Resistance"
+            tp := pdh > ent ? pdh : pivotR1 > ent ? pivotR1 : ent + (risk * 2.0)
+        else // Structure R:R
+            tp := ent + (risk * rrRatio)
+    else
+        if tpMode == "Market Support Trailing (Ride Big Trends!)"
+            tp := ent - (risk * 10.0) // Open floor target; trailed strictly by resistance!
+        else if tpMode == "Next Pivot / PDH / PDL Resistance"
+            tp := pdl < ent ? pdl : pivotS1 < ent ? pivotS1 : ent - (risk * 2.0)
+        else // Structure R:R
+            tp := ent - (risk * rrRatio)
+    tp
+
+// ----------------------------------------------------------------------------
+// ACTIVE TRADE MANAGEMENT & DYNAMIC TRAILING
+// ----------------------------------------------------------------------------
+if activeSide == 1
+    // 1. Dynamic Market Support Trailing
+    if tpMode == "Market Support Trailing (Ride Big Trends!)" or tpMode == "Hybrid (Partial TP + Trail Remainder)"
+        float newTrail = currentSL
+        if trailMethod == "Trailing EMA 9/20 Support"
+            newTrail := math.max(currentSL, emaSupport - slBufferPoints)
+        else if trailMethod == "Candle-by-Candle Low Support (Ghanshyam Style)"
+            newTrail := math.max(currentSL, low[1] - slBufferPoints)
+        else // Swing Structure Trail
+            newTrail := math.max(currentSL, ta.lowest(low, 3) - slBufferPoints)
+        
+        // Never allow SL to trail backwards
+        if newTrail > currentSL
+            currentSL := newTrail
+
+    // 2. Hybrid Partial TP Check
+    if tpMode == "Hybrid (Partial TP + Trail Remainder)" and not partialBooked and high >= partialTpPrice
+        partialBooked := true
+        currentSL := math.max(currentSL, entryPrice) // Move to Cost-Free
+        label.new(bar_index, partialTpPrice, "🎯 T1 REACHED (Secured)\nTrailing Remainder via Support!", style=label.style_label_down, color=color.new(#00b0ff, 10), textcolor=color.white, size=size.small)
+
+    // 3. Exit Conditions: Target Hit OR Market Support Broken
+    if high >= targetPrice
+        pts = targetPrice - entryPrice
+        totalWins   += 1
+        totalPts    += pts
+        activeSide  := 0
+        lastExitBar := bar_index
+        label.new(bar_index, targetPrice, "🏆 TARGET HIT (" + activeSetup + ")\n+" + str.tostring(pts, "#.1") + " pts", style=label.style_label_down, color=color.new(#00c853, 0), textcolor=color.white, size=size.small)
+    
+    else if low <= currentSL
+        pts = currentSL - entryPrice
+        if pts > 0
+            totalWins += 1
+            label.new(bar_index, currentSL, "🛡️ PROFIT RIDE EXIT (Support Break)\n+" + str.tostring(pts, "#.1") + " pts", style=label.style_label_up, color=color.new(#00b0ff, 0), textcolor=color.white, size=size.small)
+        else
+            totalLosses += 1
+            label.new(bar_index, currentSL, "✖ Support SL Hit\n" + str.tostring(pts, "#.1") + " pts", style=label.style_label_up, color=color.new(#ff1744, 10), textcolor=color.white, size=size.small)
+        totalPts    += pts
+        activeSide  := 0
+        lastExitBar := bar_index
+
+else if activeSide == -1
+    // 1. Dynamic Market Resistance Trailing
+    if tpMode == "Market Support Trailing (Ride Big Trends!)" or tpMode == "Hybrid (Partial TP + Trail Remainder)"
+        float newTrail = currentSL
+        if trailMethod == "Trailing EMA 9/20 Support"
+            newTrail := math.min(currentSL, emaResist + slBufferPoints)
+        else if trailMethod == "Candle-by-Candle Low Support (Ghanshyam Style)"
+            newTrail := math.min(currentSL, high[1] + slBufferPoints)
+        else // Swing Structure Trail
+            newTrail := math.min(currentSL, ta.highest(high, 3) + slBufferPoints)
+        
+        if newTrail < currentSL
+            currentSL := newTrail
+
+    // 2. Hybrid Partial TP Check
+    if tpMode == "Hybrid (Partial TP + Trail Remainder)" and not partialBooked and low <= partialTpPrice
+        partialBooked := true
+        currentSL := math.min(currentSL, entryPrice) // Move to Cost-Free
+        label.new(bar_index, partialTpPrice, "🎯 T1 REACHED (Secured)\nTrailing Remainder via Resistance!", style=label.style_label_up, color=color.new(#00b0ff, 10), textcolor=color.white, size=size.small)
+
+    // 3. Exit Conditions: Target Hit OR Market Resistance Broken
+    if low <= targetPrice
+        pts = entryPrice - targetPrice
+        totalWins   += 1
+        totalPts    += pts
+        activeSide  := 0
+        lastExitBar := bar_index
+        label.new(bar_index, targetPrice, "🏆 TARGET HIT (" + activeSetup + ")\n+" + str.tostring(pts, "#.1") + " pts", style=label.style_label_up, color=color.new(#00c853, 0), textcolor=color.white, size=size.small)
+    
+    else if high >= currentSL
+        pts = entryPrice - currentSL
+        if pts > 0
+            totalWins += 1
+            label.new(bar_index, currentSL, "🛡️ PROFIT RIDE EXIT (Resistance Break)\n+" + str.tostring(pts, "#.1") + " pts", style=label.style_label_down, color=color.new(#00b0ff, 0), textcolor=color.white, size=size.small)
+        else
+            totalLosses += 1
+            label.new(bar_index, currentSL, "✖ Resistance SL Hit\n" + str.tostring(pts, "#.1") + " pts", style=label.style_label_down, color=color.new(#ff1744, 10), textcolor=color.white, size=size.small)
+        totalPts    += pts
+        activeSide  := 0
+        lastExitBar := bar_index
+
+// ----------------------------------------------------------------------------
+// NEW TRADE ENTRY (ZERO-MISS & IMMEDIATE SUPPORT ATTACHMENT)
+// ----------------------------------------------------------------------------
+canTrade = activeSide == 0 and inSession and (bar_index - lastExitBar >= cooldownBars)
+
+if canTrade and rawBuy
+    activeSetup    := getSetupName(true)
+    entryPrice     := close
+    currentSL      := calcMarketSupportSL(true)
+    targetPrice    := calcMarketTarget(true, entryPrice, currentSL)
+    partialTpPrice := entryPrice + (math.abs(entryPrice - currentSL) * 1.5)
+    partialBooked  := false
+    activeSide     := 1
+    label.new(bar_index, low, "🟢 BUY [" + activeSetup + "]\nEnt: " + str.tostring(entryPrice, "#.1") + "\nSup SL: " + str.tostring(currentSL, "#.1"), style=label.style_label_up, color=color.new(#00c853, 0), textcolor=color.white, size=size.small)
+
+else if canTrade and rawSell
+    activeSetup    := getSetupName(false)
+    entryPrice     := close
+    currentSL      := calcMarketSupportSL(false)
+    targetPrice    := calcMarketTarget(false, entryPrice, currentSL)
+    partialTpPrice := entryPrice - (math.abs(entryPrice - currentSL) * 1.5)
+    partialBooked  := false
+    activeSide     := -1
+    label.new(bar_index, high, "🔴 SELL [" + activeSetup + "]\nEnt: " + str.tostring(entryPrice, "#.1") + "\nRes SL: " + str.tostring(currentSL, "#.1"), style=label.style_label_down, color=color.new(#ff1744, 0), textcolor=color.white, size=size.small)
+
+// Continuation Signals while in Trend (Ensures user never misses trend extensions!)
+if allowContinuation and activeSide == 1 and emaBounceBuy and bar_index != lastExitBar
+    label.new(bar_index, low, "➕ RE-ENTRY / ADD\n[EMA Support Ride]\nSup: " + str.tostring(calcMarketSupportSL(true), "#.1"), style=label.style_label_up, color=color.new(#0284c7, 0), textcolor=color.white, size=size.tiny)
+
+if allowContinuation and activeSide == -1 and emaBounceSell and bar_index != lastExitBar
+    label.new(bar_index, high, "➕ RE-ENTRY / ADD\n[EMA Resistance Drop]\nRes: " + str.tostring(calcMarketSupportSL(false), "#.1"), style=label.style_label_down, color=color.new(#c026d3, 0), textcolor=color.white, size=size.tiny)
+
+// ============================================================================
+// 5. VISUAL PLOTS, BRACKETS & DASHBOARD
+// ============================================================================
+plot(ema9,    "9 EMA (Fast Support)", color=color.new(#fde047, 0),  linewidth=1)
+plot(ema20,   "20 EMA (Trend Anchor)", color=color.new(#f97316, 0), linewidth=2)
+plot(ema50,   "50 EMA (Structural)",  color=color.new(#10b981, 10), linewidth=2)
+plot(vwapVal, "VWAP",                 color=color.new(#d946ef, 0),  linewidth=2, style=plot.style_circles)
+
+// Plot Real-Time Dynamic Bracket Lines
+pEnt = plot(activeSide != 0 ? entryPrice  : na, "Entry Price", color=color.new(color.white, 30), style=plot.style_linebr, linewidth=1)
+pSL  = plot(activeSide != 0 ? currentSL   : na, "Market Support SL", color=color.new(#ff1744, 0), style=plot.style_linebr, linewidth=2)
+pTP  = plot(activeSide != 0 ? (tpMode == "Market Support Trailing (Ride Big Trends!)" ? na : targetPrice) : na, "Structure TP", color=color.new(#00e676, 0), style=plot.style_linebr, linewidth=2)
+
+fill(pEnt, pSL, color=activeSide != 0 ? color.new(#ff1744, 88) : na)
+fill(pEnt, pTP, color=activeSide != 0 and tpMode != "Market Support Trailing (Ride Big Trends!)" ? color.new(#00e676, 88) : na)
+
+// Real-Time Daily CPR Bands
+plot(cprTop, "CPR Top (TC)", color=color.new(#38bdf8, 40), linewidth=1, style=plot.style_line)
+plot(cprPivot, "CPR Pivot",  color=color.new(#38bdf8, 10), linewidth=1, style=plot.style_circles)
+plot(cprBot, "CPR Bot (BC)", color=color.new(#38bdf8, 40), linewidth=1, style=plot.style_line)
+
+// Comprehensive Dashboard
+var table dash = table.new(position.top_right, 2, 7, bgcolor=color.new(#0f172a, 5), border_color=color.new(#334155, 20), border_width=1)
+if barstate.islast
+    totalTrades = totalWins + totalLosses
+    winRate     = totalTrades > 0 ? (totalWins * 100.0 / totalTrades) : 0.0
+    
+    // Header
+    table.cell(dash, 0, 0, "🇮🇳 Legends V4 [Structure Sniper]", text_color=color.white, bgcolor=color.new(#1e293b, 0), text_size=size.small)
+    table.cell(dash, 1, 0, syminfo.ticker, text_color=#38bdf8, bgcolor=color.new(#1e293b, 0), text_size=size.small)
+    
+    // Performance
+    table.cell(dash, 0, 1, "Verified Win Rate", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 1, str.tostring(winRate, "#.1") + "% (" + str.tostring(totalWins) + "W / " + str.tostring(totalLosses) + "L)", text_color=#00e676, text_size=size.small)
+    
+    table.cell(dash, 0, 2, "Net Captured Points", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 2, (totalPts >= 0 ? "+" : "") + str.tostring(totalPts, "#.##") + " pts", text_color=totalPts >= 0 ? #00e676 : #ff1744, text_size=size.small)
+    
+    // State & Engine
+    table.cell(dash, 0, 3, "Active Market State", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 3, activeSide == 1 ? "🟢 LONG (" + activeSetup + ")" : activeSide == -1 ? "🔴 SHORT (" + activeSetup + ")" : "READY (ZERO-MISS)", text_color=color.white, text_size=size.small)
+    
+    // Market Structure Support Level
+    table.cell(dash, 0, 4, "Market Support Floor", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 4, str.tostring(swingLowVal, "#.1") + " (EMA: " + str.tostring(emaSupport, "#.1") + ")", text_color=#38bdf8, text_size=size.small)
+    
+    // Live Bracket / Trailing SL
+    table.cell(dash, 0, 5, "Live Dynamic SL", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 5, activeSide != 0 ? "Trailing SL: " + str.tostring(currentSL, "#.1") : "Anchored to Support", text_color=#f59e0b, text_size=size.small)
+
+    table.cell(dash, 0, 6, "Trend Mode", text_color=color.gray, text_size=size.small)
+    trendText = close > ema50 and ema20 > ema50 ? "🚀 SUPER BULL RIDE" : close < ema50 and ema20 < ema50 ? "🔻 SUPER BEAR DIVE" : "⚖️ RANGE CONSOLIDATION"
+    table.cell(dash, 1, 6, trendText, text_color=close > ema50 ? #00e676 : #ff1744, text_size=size.small)

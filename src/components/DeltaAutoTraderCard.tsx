@@ -33,17 +33,43 @@ import {
   ArrowLeftRight,
   ArrowRight,
   Sparkles,
-  Repeat,
-  RotateCcw
+  RotateCcw,
+  Trash2,
+  Repeat
 } from 'lucide-react';
 import { CandlestickPatternPnLTerminal } from './CandlestickPatternPnLTerminal';
 import { OptionsCondorDashboard } from './OptionsCondorDashboard';
+
+export const formatDynamicPrice = (p?: number): string => {
+  if (p === undefined || p === null || isNaN(p)) return '$0.00';
+  if (p >= 1000) return '$' + p.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (p >= 1) return '$' + p.toFixed(4);
+  if (p >= 0.0001) return '$' + p.toFixed(6);
+  return '$' + p.toFixed(8);
+};
+
+export const formatDynamicDiff = (p?: number): string => {
+  if (p === undefined || p === null || isNaN(p)) return '0.00';
+  const abs = Math.abs(p);
+  if (abs >= 100) return p.toFixed(2);
+  if (abs >= 1) return p.toFixed(4);
+  return p.toFixed(6);
+};
+
+export const formatDynamicPnL = (p?: number): string => {
+  if (p === undefined || p === null || isNaN(p)) return '0.00';
+  const abs = Math.abs(p);
+  if (abs >= 0.01) return p.toFixed(2);
+  if (abs === 0) return '0.00';
+  return p.toFixed(4);
+};
+
 
 interface DeltaAutoTraderCardProps {
   onSelectCoin?: (symbol: string) => void;
 }
 
-export const DeltaAutoTraderCard: React.FC<DeltaAutoTraderCardProps> = ({ onSelectCoin }) => {
+export const DeltaAutoTraderCard: React.FC<DeltaAutoTraderCardProps> = React.memo(({ onSelectCoin }) => {
   const [status, setStatus] = useState<DeltaAutoTraderState | null>(null);
   const [diagnostics, setDiagnostics] = useState<AssetDiagnostics[]>([]);
   const [history, setHistory] = useState<DeltaClosedTrade[]>([]);
@@ -52,6 +78,8 @@ export const DeltaAutoTraderCard: React.FC<DeltaAutoTraderCardProps> = ({ onSele
   const [activeTab, setActiveTab] = useState<'candlestick' | 'options_condor' | 'positions' | 'inspection' | 'history'>('candlestick');
   const [selectedAsset, setSelectedAsset] = useState<string>('BTCUSD');
   const [forceLoading, setForceLoading] = useState(false);
+  const [activeSystem, setActiveSystemState] = useState<string>('3001_3005');
+  const [systemSwitching, setSystemSwitching] = useState<boolean>(false);
 
   const fetchBotData = async () => {
     try {
@@ -64,6 +92,9 @@ export const DeltaAutoTraderCard: React.FC<DeltaAutoTraderCardProps> = ({ onSele
       if (statusRes.ok) {
         const sData = await statusRes.json();
         setStatus(sData);
+        if (sData.activeSystem) {
+          setActiveSystemState(sData.activeSystem);
+        }
       }
       if (diagRes.ok) {
         const dData = await diagRes.json();
@@ -82,7 +113,11 @@ export const DeltaAutoTraderCard: React.FC<DeltaAutoTraderCardProps> = ({ onSele
 
   useEffect(() => {
     fetchBotData();
-    const interval = setInterval(fetchBotData, 2000); // Poll status every 2 seconds
+    const interval = setInterval(() => {
+      if (typeof document === 'undefined' || !document.hidden) {
+        fetchBotData();
+      }
+    }, 3000); // 3s poll paused when tab is hidden
     return () => clearInterval(interval);
   }, []);
 
@@ -230,11 +265,17 @@ export const DeltaAutoTraderCard: React.FC<DeltaAutoTraderCardProps> = ({ onSele
                 {status?.isRunning ? '24/7 ACTIVE' : 'PAUSED'}
               </span>
               <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono border ${
-                status?.mode === 'SIMULATION_PAPER'
-                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                  : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-[0_0_10px_rgba(16,185,129,0.3)]'
+                status?.mode === 'LIVE_DELTA_INDIA' || status?.mode === 'DELTA_LIVE'
+                  ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 shadow-[0_0_10px_rgba(244,63,94,0.3)]'
+                  : status?.mode === 'DELTA_TESTNET'
+                  ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50 shadow-[0_0_10px_rgba(6,182,212,0.3)]'
+                  : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
               }`}>
-                {status?.mode === 'SIMULATION_PAPER' ? 'DELTA DEMO (TESTNET)' : '🔴 REAL ACCOUNT (DELTA INDIA)'}
+                {status?.mode === 'LIVE_DELTA_INDIA' || status?.mode === 'DELTA_LIVE'
+                  ? '🔴 REAL ACCOUNT (DELTA INDIA)'
+                  : status?.mode === 'DELTA_TESTNET'
+                  ? '🧪 DELTA TESTNET (DEMO)'
+                  : '📝 SIMULATION (PAPER)'}
               </span>
               
             </div>
@@ -247,11 +288,20 @@ export const DeltaAutoTraderCard: React.FC<DeltaAutoTraderCardProps> = ({ onSele
         {/* Global Key Stats & Quick Action Button */}
         <div className="flex flex-wrap items-center gap-3">
           {/* Floating PnL Pill */}
-          <div className="px-3 py-1.5 rounded-xl bg-slate-950/80 border border-slate-800 flex items-center gap-2 text-xs">
+          <div className="px-3 py-1.5 rounded-xl bg-slate-950/80 border border-cyan-500/30 flex items-center gap-2 text-xs shadow-sm shadow-cyan-500/10">
             <span className="text-slate-400">Floating PnL:</span>
             <span className={`font-mono font-bold ${totalFloatingPnlUSD >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-              {totalFloatingPnlUSD >= 0 ? '+' : ''}${totalFloatingPnlUSD.toFixed(2)}
+              {totalFloatingPnlUSD >= 0 ? '+' : ''}${formatDynamicPnL(totalFloatingPnlUSD)}
             </span>
+            <button
+              id="btn-pill-reset-floating"
+              onClick={handleResetPositions}
+              title="Click to Reset Floating PnL to $0.00"
+              className="px-2 py-0.5 rounded bg-cyan-500/30 hover:bg-cyan-500/50 text-cyan-200 border border-cyan-400/50 text-[10px] font-bold font-mono transition-all ml-1 cursor-pointer flex items-center gap-1 shadow-xs"
+            >
+              <RefreshCw className="w-2.5 h-2.5" />
+              RESET
+            </button>
           </div>
 
           {/* Realized PnL Pill */}
@@ -261,6 +311,15 @@ export const DeltaAutoTraderCard: React.FC<DeltaAutoTraderCardProps> = ({ onSele
               <TrendingUp className="w-3.5 h-3.5" />
               {(status?.totalRealizedPnlUSD || 0) >= 0 ? '+' : ''}${status?.totalRealizedPnlUSD !== undefined ? status.totalRealizedPnlUSD.toFixed(2) : '0.00'}
             </span>
+            <button
+              id="btn-pill-reset-realized"
+              onClick={handleResetHistory}
+              title="Click to Reset Realized PnL to $0.00"
+              className="px-2 py-0.5 rounded bg-rose-500/30 hover:bg-rose-500/50 text-rose-200 border border-rose-400/50 text-[10px] font-bold font-mono transition-all ml-1 cursor-pointer flex items-center gap-1 shadow-xs"
+            >
+              <RotateCcw className="w-2.5 h-2.5" />
+              RESET
+            </button>
           </div>
 
           {/* Account Balance */}
@@ -338,6 +397,55 @@ export const DeltaAutoTraderCard: React.FC<DeltaAutoTraderCardProps> = ({ onSele
                 <Play className="w-3.5 h-3.5 fill-current" /> Resume 24/7 Engine
               </>
             )}
+          </button>
+
+          {/* Reset Floating PnL Button - High Prominence */}
+          <button
+            id="btn-reset-floating-pnl-header"
+            onClick={handleResetPositions}
+            title="Reset Floating PnL to $0.00 and wipe active positions"
+            className="px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 bg-cyan-500/20 text-cyan-300 border border-cyan-500/50 hover:bg-cyan-500/30 transition-all shadow-md shadow-cyan-500/10 cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5 text-cyan-400" />
+            <span>Reset Floating PnL</span>
+          </button>
+
+          {/* Reset Realized PnL Button - High Prominence */}
+          <button
+            id="btn-reset-realized-pnl-header"
+            onClick={handleResetHistory}
+            title="Reset Cumulative Realized PnL to $0.00 and wipe audit history"
+            className="px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 bg-rose-500/20 text-rose-300 border border-rose-500/50 hover:bg-rose-500/30 transition-all shadow-md shadow-rose-500/10 cursor-pointer"
+          >
+            <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
+            <span>Reset Realized PnL</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Dedicated Quick Reset Controls Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-950/80 border border-slate-800 rounded-xl px-4 py-2.5 my-3 shadow-inner">
+        <div className="flex items-center gap-2 text-xs text-slate-300">
+          <Sparkles className="w-4 h-4 text-cyan-400" />
+          <span className="font-bold text-white">Manual PnL Reset Bar:</span>
+          <span className="text-slate-400 text-[11px]">Instant 1-click reset for Floating or Cumulative Realized metrics</span>
+        </div>
+        <div className="flex items-center gap-2.5">
+          <button
+            id="btn-bar-reset-floating"
+            onClick={handleResetPositions}
+            className="px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 bg-cyan-500/20 text-cyan-300 border border-cyan-500/50 hover:bg-cyan-500/40 transition-all cursor-pointer shadow-sm shadow-cyan-500/20 hover:scale-105 active:scale-95"
+          >
+            <RefreshCw className="w-3.5 h-3.5 text-cyan-400" />
+            <span>🔄 Reset Floating PnL ($0.00)</span>
+          </button>
+          <button
+            id="btn-bar-reset-realized"
+            onClick={handleResetHistory}
+            className="px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 bg-rose-500/20 text-rose-300 border border-rose-500/50 hover:bg-rose-500/40 transition-all cursor-pointer shadow-sm shadow-rose-500/20 hover:scale-105 active:scale-95"
+          >
+            <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
+            <span>🗑️ Reset Realized PnL ($0.00)</span>
           </button>
         </div>
       </div>
@@ -445,24 +553,24 @@ export const DeltaAutoTraderCard: React.FC<DeltaAutoTraderCardProps> = ({ onSele
             <div className="flex items-center gap-2">
               <Zap className="w-4 h-4 text-indigo-400" />
               <h3 className="text-sm font-bold text-white tracking-wide">
-                Active Bot Open Positions ({activePositions.length}/8)
+                Active Bot Open Positions ({activePositions.length}/{status?.maxConcurrentPositions || 4})
               </h3>
               <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-slate-800 text-slate-300 border border-slate-700">
                 Native SL &amp; TP Protected
               </span>
             </div>
 
-            {activePositions.length > 0 && (
-              <div className="flex items-center gap-2">
-                <button
-                  id="btn-reset-positions"
-                  onClick={handleResetPositions}
-                  className="px-2.5 py-1 rounded-md bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-[10px] font-mono flex items-center gap-1 transition-all cursor-pointer"
-                >
-                  <XOctagon className="w-3 h-3" /> Reset to 0 Positions
-                </button>
-              </div>
-            )}
+            <div className="flex items-center gap-2">
+              <button
+                id="btn-reset-positions"
+                onClick={handleResetPositions}
+                title="Reset all open positions and floating PnL to $0.00"
+                className="px-3 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
+              >
+                <RefreshCw className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Reset Floating PnL / Positions</span>
+              </button>
+            </div>
           </div>
 
           {activePositions.length === 0 ? (
@@ -515,10 +623,10 @@ export const DeltaAutoTraderCard: React.FC<DeltaAutoTraderCardProps> = ({ onSele
                       {/* Floating PnL */}
                       <div className="text-right">
                         <div className={`font-mono font-bold text-sm ${isProfit ? 'text-emerald-400' : 'text-rose-400'}`}>
-                          {isProfit ? '+' : ''}${pos.pnlUSD?.toFixed(2)}
+                          {isProfit ? '+' : ''}${formatDynamicPnL(pos.pnlUSD)}
                         </div>
                         <div className={`text-[10px] font-mono ${isProfit ? 'text-emerald-400' : 'text-rose-400'}`}>
-                          ({isProfit ? '+' : ''}{pos.pnlPercent?.toFixed(2)}%)
+                          ({isProfit ? '+' : ''}{pos.pnlPercent !== undefined && Math.abs(pos.pnlPercent) < 0.01 && pos.pnlPercent !== 0 ? pos.pnlPercent.toFixed(3) : pos.pnlPercent?.toFixed(2)}%)
                         </div>
                       </div>
                     </div>
@@ -527,15 +635,15 @@ export const DeltaAutoTraderCard: React.FC<DeltaAutoTraderCardProps> = ({ onSele
                     <div className="grid grid-cols-3 gap-2 py-2 my-1 border-y border-slate-800/60 text-xs font-mono">
                       <div>
                         <span className="text-[10px] text-slate-500 block">Entry (Re-Anchored)</span>
-                        <span className="text-slate-300">${pos.entryPrice?.toFixed(2)}</span>
+                        <span className="text-slate-300">{formatDynamicPrice(pos.entryPrice)}</span>
                       </div>
                       <div>
                         <span className="text-[10px] text-slate-500 block">Current Price</span>
-                        <span className="text-white font-semibold">${pos.currentPrice?.toFixed(2)}</span>
+                        <span className="text-white font-semibold">{formatDynamicPrice(pos.currentPrice)}</span>
                       </div>
                       <div>
                         <span className="text-[10px] text-slate-500 block">Margin / Notional</span>
-                        <span className="text-slate-400">${pos.marginUSD} / ${pos.notionalUSD}</span>
+                        <span className="text-slate-400">${typeof pos.marginUSD === 'number' ? pos.marginUSD.toFixed(2) : pos.marginUSD} / ${typeof pos.notionalUSD === 'number' ? pos.notionalUSD.toFixed(2) : pos.notionalUSD}</span>
                       </div>
                     </div>
 
@@ -543,16 +651,16 @@ export const DeltaAutoTraderCard: React.FC<DeltaAutoTraderCardProps> = ({ onSele
                     <div className="space-y-1.5 my-2.5 text-xs font-mono">
                       <div className="flex items-center justify-between text-[11px]">
                         <span className="text-emerald-400 flex items-center gap-1">
-                          <Target className="w-3 h-3" /> Target TP (1.02x ATR): ${pos.takeProfitPrice?.toFixed(2)}
+                          <Target className="w-3 h-3" /> Target TP: {formatDynamicPrice(pos.takeProfitPrice)}
                         </span>
-                        <span className="text-slate-500 text-[10px]">Δ {distToTP.toFixed(2)}</span>
+                        <span className="text-slate-500 text-[10px]">Δ {formatDynamicDiff(distToTP)}</span>
                       </div>
 
                       <div className="flex items-center justify-between text-[11px]">
                         <span className="text-rose-400 flex items-center gap-1">
-                          <Shield className="w-3 h-3" /> Stop Loss (1.0x ATR): ${pos.stopLossPrice?.toFixed(2)}
+                          <Shield className="w-3 h-3" /> Stop Loss: {formatDynamicPrice(pos.stopLossPrice)}
                         </span>
-                        <span className="text-slate-500 text-[10px]">Δ {distToSL.toFixed(2)}</span>
+                        <span className="text-slate-500 text-[10px]">Δ {formatDynamicDiff(distToSL)}</span>
                       </div>
                     </div>
 
@@ -615,7 +723,7 @@ export const DeltaAutoTraderCard: React.FC<DeltaAutoTraderCardProps> = ({ onSele
                       {diag.symbol}
                     </span>
                     <span className="font-mono text-slate-300 text-xs">
-                      ${diag.price?.toFixed(diag.price > 100 ? 2 : 4)}
+                      {formatDynamicPrice(diag.price)}
                     </span>
                   </div>
 
@@ -1060,11 +1168,11 @@ export const DeltaAutoTraderCard: React.FC<DeltaAutoTraderCardProps> = ({ onSele
                           </span>
                         </td>
                         <td className="py-2.5 px-3 text-slate-300">
-                          ${t.entryPrice?.toFixed(2)} &rarr; ${t.exitPrice?.toFixed(2)}
+                          {formatDynamicPrice(t.entryPrice)} &rarr; {formatDynamicPrice(t.exitPrice)}
                         </td>
                         <td className="py-2.5 px-3">
                           <span className={`font-bold ${isWin ? 'text-emerald-400' : 'text-rose-400'}`}>
-                            {isWin ? '+' : ''}${t.pnlUSD?.toFixed(2)} ({isWin ? '+' : ''}{t.pnlPercent?.toFixed(1)}%)
+                            {isWin ? '+' : ''}${formatDynamicPnL(t.pnlUSD)} ({isWin ? '+' : ''}{t.pnlPercent?.toFixed(1)}%)
                           </span>
                         </td>
                         <td className="py-2.5 px-3 text-indigo-300 font-semibold">
@@ -1094,4 +1202,4 @@ export const DeltaAutoTraderCard: React.FC<DeltaAutoTraderCardProps> = ({ onSele
       )}
     </div>
   );
-};
+});

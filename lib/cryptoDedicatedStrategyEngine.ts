@@ -102,6 +102,33 @@ export class CryptoDedicatedStrategyEngine {
     return { macdLine, signalLine, histogram };
   }
 
+  /**
+   * Zero-Lag MACD (ZLMACD):
+   * Replaces standard lagging EMA with Zero-Lag EMA (ZLEMA), eliminating standard 6-9 bar phase delay!
+   */
+  public static calculateZeroLagMACD(
+    closes: number[],
+    fastPeriod: number = 12,
+    slowPeriod: number = 26,
+    signalPeriod: number = 9
+  ): { macdLine: number[]; signalLine: number[]; histogram: number[] } {
+    if (closes.length < slowPeriod) {
+      return { macdLine: [], signalLine: [], histogram: [] };
+    }
+    const fastZlema = this.calculateZLEMA(closes, fastPeriod);
+    const slowZlema = this.calculateZLEMA(closes, slowPeriod);
+    const macdLine: number[] = [];
+    for (let i = 0; i < closes.length; i++) {
+      macdLine.push(fastZlema[i] - slowZlema[i]);
+    }
+    const signalLine = this.calculateZLEMA(macdLine, signalPeriod);
+    const histogram: number[] = [];
+    for (let i = 0; i < closes.length; i++) {
+      histogram.push(macdLine[i] - signalLine[i]);
+    }
+    return { macdLine, signalLine, histogram };
+  }
+
   public static calculateSMA(values: number[], period: number): number[] {
     const sma: number[] = [];
     for (let i = 0; i < values.length; i++) {
@@ -467,12 +494,13 @@ export class CryptoDedicatedStrategyEngine {
     // 1. Future UP Trigger: Momentum curve curves upwards while in oversold zone or crossing up
     const waveCrossoverUp = prevScaledWave <= prevScaledSig && currScaledWave > currScaledSig;
     const waveTurnsUp = currScaledWave > prevScaledWave && prevScaledWave <= prev2ScaledWave;
-    const predictUp = (waveCrossoverUp && currScaledWave < 30) || (waveTurnsUp && currScaledWave <= osLevel);
+    // Allow trend-following momentum crossovers up to overbought/oversold boundaries
+    const predictUp = (waveCrossoverUp && currScaledWave < 55) || (waveTurnsUp && currScaledWave <= osLevel);
 
     // 2. Future DOWN Trigger: Momentum curve curves downwards from overbought zone or crossing down
     const waveCrossoverDown = prevScaledWave >= prevScaledSig && currScaledWave < currScaledSig;
     const waveTurnsDown = currScaledWave < prevScaledWave && prevScaledWave >= prev2ScaledWave;
-    const predictDown = (waveCrossoverDown && currScaledWave > -30) || (waveTurnsDown && currScaledWave >= obLevel);
+    const predictDown = (waveCrossoverDown && currScaledWave > -55) || (waveTurnsDown && currScaledWave >= obLevel);
 
     // 7. Leading Divergence Detection (Predicts Reversals)
     let lastWaveLow = NaN;
@@ -542,10 +570,10 @@ export class CryptoDedicatedStrategyEngine {
       reason = `[NEX-PREDICT] 🔮 FUTURE DUMP: Bearish Divergence on Predictive Wave (Wave: ${currScaledWave.toFixed(1)}, Hist: ${currScaledHist.toFixed(1)})`;
     } else if (predictUp) {
       signal = 'BUY';
-      reason = `[NEX-PREDICT] 🚀 Future UP Wave: ${waveCrossoverUp ? 'Crossover Up (<30)' : 'Turning Up in Oversold (<=' + osLevel + ')'} (Wave: ${currScaledWave.toFixed(1)})`;
+      reason = `[NEX-PREDICT] 🚀 Future UP Wave: ${waveCrossoverUp ? 'Crossover Up (<55)' : 'Turning Up in Oversold (<=' + osLevel + ')'} (Wave: ${currScaledWave.toFixed(1)})`;
     } else if (predictDown) {
       signal = 'SELL';
-      reason = `[NEX-PREDICT] ⚠️ Future DOWN Wave: ${waveCrossoverDown ? 'Crossover Down (>-30)' : 'Turning Down in Overbought (>=' + obLevel + ')'} (Wave: ${currScaledWave.toFixed(1)})`;
+      reason = `[NEX-PREDICT] ⚠️ Future DOWN Wave: ${waveCrossoverDown ? 'Crossover Down (>-55)' : 'Turning Down in Overbought (>=' + obLevel + ')'} (Wave: ${currScaledWave.toFixed(1)})`;
     } else {
       reason = `[NEX-PREDICT] Scanning Predictive Wave (${currScaledWave.toFixed(1)} / Sig: ${currScaledSig.toFixed(1)})`;
     }
@@ -803,8 +831,8 @@ export class CryptoDedicatedStrategyEngine {
     const isWaveBullCross = isWaveBullCrossNow || isWaveBullCrossPrev;
     const isWaveBearCross = isWaveBearCrossNow || isWaveBearCrossPrev;
 
-    const allowBuyTrend = trendUp || wasDeepOversold;
-    const allowSellTrend = trendDown || wasDeepOverbought || upperWickPct >= 0.25 || isInstSellCandle || isZlemaBearCrossNow || isWaveBearCrossNow;
+    const allowBuyTrend = (trendUp || wasDeepOversold || isWaveBullCrossNow || isZlemaBullCrossNow) && !trendDown;
+    const allowSellTrend = (trendDown || wasDeepOverbought || isWaveBearCrossNow || isZlemaBearCrossNow) && !trendUp;
 
     // 12. Armed State Tracking (Fresh cross arms setup for up to 3 bars)
     let armedRecord = this.armedStates.get('XRP');
@@ -832,23 +860,16 @@ export class CryptoDedicatedStrategyEngine {
     const isBullishMomentum = currScaledWave > currScaledSig || lastFastZ > lastSlowZ;
     const isBearishMomentum = currScaledWave < currScaledSig || lastFastZ < lastSlowZ;
 
-    // Strict fresh cross trigger — zero stale armed memory and no isolated candle body triggers
+    // Strict fresh cross trigger — symmetrical buy and sell gates
     const isFreshTriggerBuy = (isZlemaBullCrossNow || isWaveBullCrossNow || (isZlemaBullCrossPrev && isBullishMomentum)) && allowBuyTrend && !isPostDumpTrap;
-    const isFreshTriggerSell = (isZlemaBearCrossNow || isWaveBearCrossNow || (isZlemaBearCrossPrev && isBearishMomentum)) && allowSellTrend && (!isPostPumpTrap || isInstSellCandle || upperWickPct >= 0.25 || isZlemaBearCrossNow || isWaveBearCrossNow);
-    const isContinuationSell = trendDown && isBearishMomentum && candleConfirmsSell && (lastFastZ < lastSlowZ || currScaledWave < currScaledSig);
+    const isFreshTriggerSell = (isZlemaBearCrossNow || isWaveBearCrossNow || (isZlemaBearCrossPrev && isBearishMomentum)) && allowSellTrend && !isPostPumpTrap;
+    const isContinuationBuy = trendUp && isBullishMomentum && candleConfirmsBuy;
+    const isContinuationSell = trendDown && isBearishMomentum && candleConfirmsSell;
 
     if (isChopMode) {
       signal = null;
       reason = `[NEX-XRP-PRO] Anti-Chop Shield Active (CHOP ${chopIndex.toFixed(1)} / ADX ${adx.toFixed(1)}): Market consolidation freeze`;
-    } else if ((isFreshTriggerSell || isContinuationSell) && isBearishMomentum && candleConfirmsSell && (trendDown || !isFreshTriggerBuy)) {
-      signal = 'SELL';
-      const trigger = lastFastZ < lastSlowZ
-        ? `ZLEMA (8/21) Bear Momentum (Fast ${lastFastZ.toFixed(4)} < Slow ${lastSlowZ.toFixed(4)})`
-        : `Momentum Wave Bear (Wave ${currScaledWave.toFixed(1)} < Signal ${currScaledSig.toFixed(1)})`;
-      reason = `[NEX-XRP-PRO] Indicator SELL: ${trigger} + Pattern: ${candlePattern} | Trend EMA 100: $${lastTrendEma.toFixed(4)}`;
-      this.armedStates.delete('XRP');
-      armedBarsRemaining = 0;
-    } else if (isFreshTriggerBuy && isBullishMomentum && candleConfirmsBuy) {
+    } else if ((isFreshTriggerBuy || isContinuationBuy) && isBullishMomentum && candleConfirmsBuy && (trendUp || !isFreshTriggerSell)) {
       signal = 'BUY';
       const trigger = lastFastZ > lastSlowZ
         ? `ZLEMA (8/21) Bull Momentum (Fast ${lastFastZ.toFixed(4)} > Slow ${lastSlowZ.toFixed(4)})`
@@ -856,7 +877,7 @@ export class CryptoDedicatedStrategyEngine {
       reason = `[NEX-XRP-PRO] Indicator BUY: ${trigger} + Pattern: ${candlePattern} | Trend EMA 100: $${lastTrendEma.toFixed(4)}`;
       this.armedStates.delete('XRP');
       armedBarsRemaining = 0;
-    } else if (isFreshTriggerSell && isBearishMomentum && candleConfirmsSell) {
+    } else if ((isFreshTriggerSell || isContinuationSell) && isBearishMomentum && candleConfirmsSell && (trendDown || !isFreshTriggerBuy)) {
       signal = 'SELL';
       const trigger = lastFastZ < lastSlowZ
         ? `ZLEMA (8/21) Bear Momentum (Fast ${lastFastZ.toFixed(4)} < Slow ${lastSlowZ.toFixed(4)})`
@@ -1130,8 +1151,8 @@ export class CryptoDedicatedStrategyEngine {
       }
     }
 
-    const allowBuyTrend = trendUp || wasDeepOversold;
-    const allowSellTrend = trendDown || wasDeepOverbought || upperWickPct >= 0.25 || isInstSellCandle || isZlemaBearCrossNow || isWaveBearCrossNow || bearishDiv;
+    const allowBuyTrend = (trendUp || wasDeepOversold || isWaveBullCrossNow || isZlemaBullCrossNow || bullishDiv) && !trendDown;
+    const allowSellTrend = (trendDown || wasDeepOverbought || isWaveBearCrossNow || isZlemaBearCrossNow || bearishDiv) && !trendUp;
 
     let armedRecord = this.armedStates.get('BTC');
     let armedBarsRemaining = 0;
@@ -1158,14 +1179,16 @@ export class CryptoDedicatedStrategyEngine {
     const isBullishMomentum = currScaledWave > currScaledSig || lastFastZ > lastSlowZ || bullishDiv;
     const isBearishMomentum = currScaledWave < currScaledSig || lastFastZ < lastSlowZ || bearishDiv;
 
-    // Strict fresh cross trigger — zero stale armed memory and no isolated candle body triggers
+    // Strict fresh cross trigger — symmetrical buy and sell gates
     const isFreshTriggerBuy = (isZlemaBullCrossNow || isWaveBullCrossNow || bullishDiv || (isZlemaBullCrossPrev && isBullishMomentum)) && allowBuyTrend && !isPostDumpTrap;
-    const isFreshTriggerSell = (isZlemaBearCrossNow || isWaveBearCrossNow || bearishDiv || (isZlemaBearCrossPrev && isBearishMomentum)) && allowSellTrend && (!isPostPumpTrap || isInstSellCandle || upperWickPct >= 0.25 || isZlemaBearCrossNow || isWaveBearCrossNow || bearishDiv);
+    const isFreshTriggerSell = (isZlemaBearCrossNow || isWaveBearCrossNow || bearishDiv || (isZlemaBearCrossPrev && isBearishMomentum)) && allowSellTrend && !isPostPumpTrap;
+    const isContinuationBuy = trendUp && isBullishMomentum && candleConfirmsBuy;
+    const isContinuationSell = trendDown && isBearishMomentum && candleConfirmsSell;
 
     if (isChopMode) {
       signal = null;
       reason = `[NEX-V33-INDICATOR] Anti-Chop Shield Active (CHOP ${chopIndex.toFixed(1)} / ADX ${adx.toFixed(1)}): Market consolidation freeze`;
-    } else if (isFreshTriggerBuy && isBullishMomentum && candleConfirmsBuy) {
+    } else if ((isFreshTriggerBuy || isContinuationBuy) && isBullishMomentum && candleConfirmsBuy && (trendUp || !isFreshTriggerSell)) {
       signal = 'BUY';
       const trigger = lastFastZ > lastSlowZ
         ? `ZLEMA (8/21) Bull Momentum (Fast $${lastFastZ.toFixed(2)} > Slow $${lastSlowZ.toFixed(2)})`
@@ -1173,7 +1196,7 @@ export class CryptoDedicatedStrategyEngine {
       reason = `[NEX-V33-INDICATOR] Indicator BUY: ${trigger} + Pattern: ${candlePattern} | Trend EMA 100: $${lastTrendEma.toFixed(2)}`;
       this.armedStates.delete('BTC');
       armedBarsRemaining = 0;
-    } else if (isFreshTriggerSell && isBearishMomentum && candleConfirmsSell) {
+    } else if ((isFreshTriggerSell || isContinuationSell) && isBearishMomentum && candleConfirmsSell && (trendDown || !isFreshTriggerBuy)) {
       signal = 'SELL';
       const trigger = lastFastZ < lastSlowZ
         ? `ZLEMA (8/21) Bear Momentum (Fast $${lastFastZ.toFixed(2)} < Slow $${lastSlowZ.toFixed(2)})`
@@ -1514,8 +1537,8 @@ export class CryptoDedicatedStrategyEngine {
     const isWaveBullCross = isWaveBullCrossNow || isWaveBullCrossPrev;
     const isWaveBearCross = isWaveBearCrossNow || isWaveBearCrossPrev;
 
-    const allowBuyTrend = trendUp || wasDeepOversold;
-    const allowSellTrend = trendDown || wasDeepOverbought || upperWickPct >= 0.25 || isInstSellCandle || isZlemaBearCrossNow || isWaveBearCrossNow;
+    const allowBuyTrend = (trendUp || wasDeepOversold || isWaveBullCrossNow || isZlemaBullCrossNow) && !trendDown;
+    const allowSellTrend = (trendDown || wasDeepOverbought || isWaveBearCrossNow || isZlemaBearCrossNow) && !trendUp;
 
     let armedRecord = this.armedStates.get('ADA');
     let armedBarsRemaining = 0;
@@ -1542,23 +1565,16 @@ export class CryptoDedicatedStrategyEngine {
     const isBullishMomentum = currScaledWave > currScaledSig || lastFastZ > lastSlowZ;
     const isBearishMomentum = currScaledWave < currScaledSig || lastFastZ < lastSlowZ;
 
-    // Strict fresh cross trigger — zero stale armed memory and no isolated candle body triggers
+    // Strict fresh cross trigger — symmetrical buy and sell gates
     const isFreshTriggerBuy = (isZlemaBullCrossNow || isWaveBullCrossNow || (isZlemaBullCrossPrev && isBullishMomentum)) && allowBuyTrend && !isPostDumpTrap;
-    const isFreshTriggerSell = (isZlemaBearCrossNow || isWaveBearCrossNow || (isZlemaBearCrossPrev && isBearishMomentum)) && allowSellTrend && (!isPostPumpTrap || isInstSellCandle || upperWickPct >= 0.25 || isZlemaBearCrossNow || isWaveBearCrossNow);
-    const isContinuationSell = trendDown && isBearishMomentum && candleConfirmsSell && (lastFastZ < lastSlowZ || currScaledWave < currScaledSig);
+    const isFreshTriggerSell = (isZlemaBearCrossNow || isWaveBearCrossNow || (isZlemaBearCrossPrev && isBearishMomentum)) && allowSellTrend && !isPostPumpTrap;
+    const isContinuationBuy = trendUp && isBullishMomentum && candleConfirmsBuy;
+    const isContinuationSell = trendDown && isBearishMomentum && candleConfirmsSell;
 
     if (isChopMode) {
       signal = null;
       reason = `[NEX-ADA-PRO] Anti-Chop Shield Active (CHOP ${chopIndex.toFixed(1)} / ADX ${adx.toFixed(1)}): Market consolidation freeze`;
-    } else if ((isFreshTriggerSell || isContinuationSell) && isBearishMomentum && candleConfirmsSell && (trendDown || !isFreshTriggerBuy)) {
-      signal = 'SELL';
-      const trigger = lastFastZ < lastSlowZ
-        ? `ZLEMA (8/21) Bear Momentum (Fast $${lastFastZ.toFixed(4)} < Slow $${lastSlowZ.toFixed(4)})`
-        : `Momentum Wave Bear (Wave ${currScaledWave.toFixed(1)} < Signal ${currScaledSig.toFixed(1)})`;
-      reason = `[NEX-ADA-PRO] Indicator SELL: ${trigger} + Pattern: ${candlePattern} | Trend EMA 80: $${lastTrendEma80.toFixed(4)}`;
-      this.armedStates.delete('ADA');
-      armedBarsRemaining = 0;
-    } else if (isFreshTriggerBuy && isBullishMomentum && candleConfirmsBuy) {
+    } else if ((isFreshTriggerBuy || isContinuationBuy) && isBullishMomentum && candleConfirmsBuy && (trendUp || !isFreshTriggerSell)) {
       signal = 'BUY';
       const trigger = lastFastZ > lastSlowZ
         ? `ZLEMA (8/21) Bull Momentum (Fast $${lastFastZ.toFixed(4)} > Slow $${lastSlowZ.toFixed(4)})`
@@ -1566,7 +1582,7 @@ export class CryptoDedicatedStrategyEngine {
       reason = `[NEX-ADA-PRO] Indicator BUY: ${trigger} + Pattern: ${candlePattern} | Trend EMA 80: $${lastTrendEma80.toFixed(4)}`;
       this.armedStates.delete('ADA');
       armedBarsRemaining = 0;
-    } else if (isFreshTriggerSell && isBearishMomentum && candleConfirmsSell) {
+    } else if ((isFreshTriggerSell || isContinuationSell) && isBearishMomentum && candleConfirmsSell && (trendDown || !isFreshTriggerBuy)) {
       signal = 'SELL';
       const trigger = lastFastZ < lastSlowZ
         ? `ZLEMA (8/21) Bear Momentum (Fast $${lastFastZ.toFixed(4)} < Slow $${lastSlowZ.toFixed(4)})`
@@ -1802,8 +1818,10 @@ export class CryptoDedicatedStrategyEngine {
     const bullBbReclaim = bullReclaim && (fastRsi <= 45);
     const bearBbReclaim = bearReclaim && (fastRsi >= 55);
 
-    const isBullishMomentum = (lastFastZ > lastSlowZ && fastRsi <= 55) || isZlemaBullCross || bullBbReclaim;
-    const isBearishMomentum = (lastFastZ < lastSlowZ && (fastRsi <= 60 || fastRsi >= 40)) || isZlemaBearCross || bearBbReclaim;
+    const isAvaxUptrend = lastFastZ > lastSlowZ || currentPrice >= currBbBasis;
+    const maxAvaxBullRsi = isAvaxUptrend ? 75 : 55;
+    const isBullishMomentum = (lastFastZ > lastSlowZ && fastRsi <= maxAvaxBullRsi) || isZlemaBullCross || bullBbReclaim;
+    const isBearishMomentum = (lastFastZ < lastSlowZ && (fastRsi <= 60 && fastRsi >= 40)) || isZlemaBearCross || bearBbReclaim;
     const candleEval = CryptoDedicatedStrategyEngine.evaluateCandlePattern(lastBar, prevBar);
     const candleConfirmsSell = (candleEval.isInstitutional && !candleEval.isBullish) || (lastBar.close < lastBar.open && (lastBar.open - lastBar.close) >= safeAtr * 0.35);
     const candleConfirmsBuy = (candleEval.isInstitutional && candleEval.isBullish) || (lastBar.close > lastBar.open && (lastBar.close - lastBar.open) >= safeAtr * 0.35);
@@ -1836,7 +1854,7 @@ export class CryptoDedicatedStrategyEngine {
       reason = `[NEX-AVAX-PRO] Anti-Chop Shield Active (CHOP ${chopIndex.toFixed(1)} / ADX ${adx.toFixed(1)}): Market consolidation freeze`;
       frozenTP = buyFrozenTp;
       frozenSL = buyFrozenSl;
-    } else if (rawSellSignal && (isZlemaBearCross || bearBbReclaim || (candleEval.isInstitutional && !candleEval.isBullish) || !rawBuySignal)) {
+    } else if (rawSellSignal && (isZlemaBearCross || bearBbReclaim || (candleEval.isInstitutional && !candleEval.isBullish))) {
       signal = 'SELL';
       frozenTP = sellFrozenTp;
       frozenSL = sellFrozenSl;
@@ -2156,8 +2174,8 @@ export class CryptoDedicatedStrategyEngine {
     const isWaveBullCross = isWaveBullCrossNow || isWaveBullCrossPrev;
     const isWaveBearCross = isWaveBearCrossNow || isWaveBearCrossPrev;
 
-    const allowBuyTrend = (trendUp || wasDeepOversold) && !trendDown;
-    const allowSellTrend = trendDown || wasDeepOverbought || upperWickPct >= 0.20 || isInstSellCandle || isZlemaBearCrossNow || isWaveBearCrossNow || lastBar.close < lastBar.open;
+    const allowBuyTrend = (trendUp || wasDeepOversold || isWaveBullCrossNow || isZlemaBullCrossNow) && !trendDown;
+    const allowSellTrend = (trendDown || wasDeepOverbought || isWaveBearCrossNow || isZlemaBearCrossNow) && !trendUp;
 
     let activeArmed: any = undefined;
     let armedBarsRemaining = 0;
@@ -2182,26 +2200,18 @@ export class CryptoDedicatedStrategyEngine {
       : 'Standard Bar';
 
     const isBullishMomentum = (currScaledWave > currScaledSig || lastFastZ > lastSlowZ) && lastBar.close >= lastBar.open;
-    const isBearishMomentum = currScaledWave < currScaledSig || lastFastZ < lastSlowZ || lastBar.close < lastBar.open;
+    const isBearishMomentum = (currScaledWave < currScaledSig || lastFastZ < lastSlowZ) && lastBar.close <= lastBar.open;
 
-    // Strict fresh cross trigger — zero stale armed memory and no isolated candle body triggers
+    // Strict fresh cross trigger — symmetrical buy and sell gates
     const isFreshTriggerBuy = (isZlemaBullCrossNow || isWaveBullCrossNow || (isZlemaBullCrossPrev && isBullishMomentum)) && allowBuyTrend && !isPostDumpTrap;
-    const isFreshTriggerSell = (isZlemaBearCrossNow || isWaveBearCrossNow || (isZlemaBearCrossPrev && isBearishMomentum)) && allowSellTrend && (!isPostPumpTrap || isInstSellCandle || upperWickPct >= 0.20 || isZlemaBearCrossNow || isWaveBearCrossNow);
+    const isFreshTriggerSell = (isZlemaBearCrossNow || isWaveBearCrossNow || (isZlemaBearCrossPrev && isBearishMomentum)) && allowSellTrend && !isPostPumpTrap;
+    const isContinuationBuy = trendUp && isBullishMomentum && candleConfirmsBuy;
     const isContinuationSell = trendDown && isBearishMomentum && candleConfirmsSell;
 
     if (isChopMode) {
       signal = null;
       reason = `[NEX-DOGE-PRO] Anti-Chop Shield Active (CHOP ${chopIndex.toFixed(1)} / ADX ${adx.toFixed(1)}): Market consolidation freeze`;
-    } else if ((isFreshTriggerSell || isContinuationSell) && isBearishMomentum && candleConfirmsSell && (trendDown || !isFreshTriggerBuy)) {
-      signal = 'SELL';
-      const trigger = lastFastZ < lastSlowZ
-        ? `ZLEMA (8/21) Bear Momentum (Fast $${lastFastZ.toFixed(5)} < Slow $${lastSlowZ.toFixed(5)})`
-        : `Momentum Wave Bear (Wave ${currScaledWave.toFixed(1)} < Signal ${currScaledSig.toFixed(1)})`;
-      reason = `[NEX-DOGE-PRO] Indicator SELL: ${trigger} + Pattern: ${candlePattern} | Trend EMA 100: $${lastTrendEma100.toFixed(4)}`;
-      this.armedStates.delete('DOGE');
-      activeArmed = undefined;
-      armedBarsRemaining = 0;
-    } else if (isFreshTriggerBuy && isBullishMomentum && candleConfirmsBuy) {
+    } else if ((isFreshTriggerBuy || isContinuationBuy) && isBullishMomentum && candleConfirmsBuy && (trendUp || !isFreshTriggerSell)) {
       signal = 'BUY';
       const trigger = lastFastZ > lastSlowZ
         ? `ZLEMA (8/21) Bull Momentum (Fast $${lastFastZ.toFixed(5)} > Slow $${lastSlowZ.toFixed(5)})`
@@ -2210,7 +2220,7 @@ export class CryptoDedicatedStrategyEngine {
       this.armedStates.delete('DOGE');
       activeArmed = undefined;
       armedBarsRemaining = 0;
-    } else if (isFreshTriggerSell && isBearishMomentum && candleConfirmsSell) {
+    } else if ((isFreshTriggerSell || isContinuationSell) && isBearishMomentum && candleConfirmsSell && (trendDown || !isFreshTriggerBuy)) {
       signal = 'SELL';
       const trigger = lastFastZ < lastSlowZ
         ? `ZLEMA (8/21) Bear Momentum (Fast $${lastFastZ.toFixed(5)} < Slow $${lastSlowZ.toFixed(5)})`
@@ -2419,7 +2429,7 @@ export class CryptoDedicatedStrategyEngine {
 
     // 6. Fast RSI(5)
     const rsiArr = CryptoDedicatedStrategyEngine.calculateRSI(closes, rsiLength);
-    const fastRsi = rsiArr[len - 1] || 50;
+    const fastRsi = rsiArr[rsiArr.length - 1] || 50;
 
     // 7. Trend EMA (90)
     const trendEmaArr = CryptoDedicatedStrategyEngine.calculateEMA(closes, trendLen);
@@ -2816,16 +2826,16 @@ export class CryptoDedicatedStrategyEngine {
 
     // Master Trend Alignment Permission
     const allowBuyTrend = (trendUp || isFreshBullTrigger) && !isInsideBar;
-    const allowSellTrend = (trendDown || wasDeepOverbought || isFreshBearTrigger || lastCandle.close < lastCandle.open) && !isInsideBar;
+    const allowSellTrend = (trendDown || isFreshBearTrigger || wasDeepOverbought) && !isInsideBar;
 
     const isBullishMomentum = (currScaledWave > currScaledSig || lastFastZ > lastSlowZ) && lastCandle.close >= lastCandle.open;
-    const isBearishMomentum = currScaledWave < currScaledSig || lastFastZ < lastSlowZ || lastCandle.close < lastCandle.open;
+    const isBearishMomentum = (currScaledWave < currScaledSig || lastFastZ < lastSlowZ) && lastCandle.close <= lastCandle.open;
 
     const candleConfirmsSell = lastCandle.close < lastCandle.open || (candleEval.isInstitutional && !candleEval.isBullish);
     const candleConfirmsBuy = lastCandle.close > lastCandle.open || (candleEval.isInstitutional && candleEval.isBullish);
 
     const canBuy = (isFreshBullTrigger || (isBullishMomentum && candleConfirmsBuy)) && allowBuyTrend && !trendDown;
-    const canSell = (isFreshBearTrigger || (isBearishMomentum && candleConfirmsSell)) && allowSellTrend;
+    const canSell = (isFreshBearTrigger || (isBearishMomentum && candleConfirmsSell)) && allowSellTrend && !trendUp;
 
     let signal: 'BUY' | 'SELL' | null = null;
     let reason = '';
@@ -2833,7 +2843,7 @@ export class CryptoDedicatedStrategyEngine {
     if (isChopMode) {
       signal = null;
       reason = `SOL Scanning: Anti-Chop Shield Active (CHOP ${chopIndex.toFixed(1)} / ADX ${adx.toFixed(1)}) | 100 EMA: $${trendEma.toFixed(2)}`;
-    } else if (canSell && (isFreshBearTrigger || trendDown || !canBuy)) {
+    } else if (canSell && (isFreshBearTrigger || trendDown)) {
       signal = 'SELL';
       const trigger = isZlemaBearCross
         ? `ZLEMA (8/21) Bear Cross (Fast $${lastFastZ.toFixed(2)} < Slow $${lastSlowZ.toFixed(2)})`
@@ -3024,7 +3034,7 @@ export class CryptoDedicatedStrategyEngine {
 
     // Fast RSI(5) Exhaustion
     const rsiArr = CryptoDedicatedStrategyEngine.calculateRSI(closes, rsiLength);
-    const currFastRsi = rsiArr[len - 1] ?? 50;
+    const currFastRsi = rsiArr[rsiArr.length - 1] ?? 50;
 
     // Reclaim Conditions
     const lastLow = lows[len - 1];
@@ -3081,8 +3091,10 @@ export class CryptoDedicatedStrategyEngine {
     const bullBbReclaim = bullReclaim && (currFastRsi <= 45);
     const bearBbReclaim = bearReclaim && (currFastRsi >= 55);
 
-    const isBullishMomentum = (lastFastZ > lastSlowZ && currFastRsi <= 55) || isZlemaBullCross || bullBbReclaim;
-    const isBearishMomentum = (lastFastZ < lastSlowZ && (currFastRsi <= 60 || currFastRsi >= 40)) || isZlemaBearCross || bearBbReclaim;
+    const isSuiUptrend = lastFastZ > lastSlowZ || currentPrice >= currBbBasis;
+    const maxSuiBullRsi = isSuiUptrend ? 75 : 55;
+    const isBullishMomentum = (lastFastZ > lastSlowZ && currFastRsi <= maxSuiBullRsi) || isZlemaBullCross || bullBbReclaim;
+    const isBearishMomentum = (lastFastZ < lastSlowZ && (currFastRsi <= 60 && currFastRsi >= 40)) || isZlemaBearCross || bearBbReclaim;
     const lastCandle = candles[len - 1];
     const prevCandle = len > 1 ? candles[len - 2] : undefined;
     const candleEval = CryptoDedicatedStrategyEngine.evaluateCandlePattern(lastCandle, prevCandle);
@@ -3104,7 +3116,7 @@ export class CryptoDedicatedStrategyEngine {
     if (isChopMode) {
       signal = null;
       reason = `[NEX-SUI-PRO] Anti-Chop Shield Active (CHOP ${chopIndex.toFixed(1)} / ADX ${adx.toFixed(1)}): Market consolidation freeze`;
-    } else if (rawSellSignal && (isFreshBearTrigger || (candleEval.isInstitutional && !candleEval.isBullish) || !rawBuySignal)) {
+    } else if (rawSellSignal && (isFreshBearTrigger || (candleEval.isInstitutional && !candleEval.isBullish))) {
       signal = 'SELL';
       const trigger = isZlemaBearCross
         ? `ZLEMA (8/21) Bear Cross (Fast $${lastFastZ.toFixed(4)} < Slow $${lastSlowZ.toFixed(4)})`
@@ -3257,32 +3269,33 @@ export class CryptoDedicatedStrategyEngine {
     const lastCandle = candles[len - 1];
     const prevCandle = len > 1 ? candles[len - 2] : undefined;
 
-    // 1. Multi-EMA Alignment (EMA 20, EMA 50, EMA 200)
-    const ema20Arr = this.calculateEMA(closes, 20);
+    // 1. Zero-Lag Trend Alignment (ZLEMA 13, ZLEMA 34 & EMA 50 - Zero Lag)
+    const zlema13Arr = this.calculateZLEMA(closes, 13);
+    const zlema34Arr = this.calculateZLEMA(closes, 34);
     const ema50Arr = this.calculateEMA(closes, 50);
     const ema200Arr = this.calculateEMA(closes, Math.min(200, closes.length));
 
-    const ema20 = ema20Arr[ema20Arr.length - 1] || currentPrice;
+    const zlema13 = zlema13Arr[zlema13Arr.length - 1] || currentPrice;
+    const zlema34 = zlema34Arr[zlema34Arr.length - 1] || currentPrice;
+    const ema20 = zlema13; // Fast zero-lag surrogate
     const ema50 = ema50Arr[ema50Arr.length - 1] || currentPrice;
     const ema200 = ema200Arr[ema200Arr.length - 1] || currentPrice;
 
-    // Professional Multi-EMA Trend Alignment:
-    // Bullish Trend: Price >= EMA 50 with EMA 20 momentum (or breakout above EMA 200)
-    // Bearish Trend: Price <= EMA 50 with EMA 20 momentum (or breakdown below EMA 200)
-    const isMacroBullish = (currentPrice >= ema50 && (ema20 >= ema50 || currentPrice >= ema20)) || (currentPrice >= ema200 && currentPrice >= ema20);
-    const isMacroBearish = (currentPrice <= ema50 && (ema20 <= ema50 || currentPrice <= ema20)) || (currentPrice <= ema200 && currentPrice <= ema20);
+    // Zero-Lag Trend Alignment (Instantaneous Directional Momentum):
+    const isMacroBullish = (currentPrice >= zlema13 && zlema13 >= zlema34) || (currentPrice >= ema50 && zlema13 >= ema50);
+    const isMacroBearish = (currentPrice <= zlema13 && zlema13 <= zlema34) || (currentPrice <= ema50 && zlema13 <= ema50);
 
     let trendDirection: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
     let trendReason = '';
 
     if (isMacroBullish && !isMacroBearish) {
       trendDirection = 'BULLISH';
-      trendReason = `Bullish Trend: Price ($${currentPrice.toFixed(2)}) >= 50 EMA ($${ema50.toFixed(2)}) & Momentum aligned`;
+      trendReason = `Zero-Lag Bullish Trend: Price ($${currentPrice.toFixed(2)}) >= ZLEMA13 ($${zlema13.toFixed(2)}) & ZLEMA34 ($${zlema34.toFixed(2)})`;
     } else if (isMacroBearish && !isMacroBullish) {
       trendDirection = 'BEARISH';
-      trendReason = `Bearish Trend: Price ($${currentPrice.toFixed(2)}) <= 50 EMA ($${ema50.toFixed(2)}) & Momentum aligned`;
+      trendReason = `Zero-Lag Bearish Trend: Price ($${currentPrice.toFixed(2)}) <= ZLEMA13 ($${zlema13.toFixed(2)}) & ZLEMA34 ($${zlema34.toFixed(2)})`;
     } else {
-      trendReason = `Neutral/Sideways Range: Price oscillating between EMAs (P:$${currentPrice.toFixed(2)}, EMA20:$${ema20.toFixed(2)}, EMA50:$${ema50.toFixed(2)})`;
+      trendReason = `Neutral/Sideways Range: Price oscillating between ZLEMA ribbon (P:$${currentPrice.toFixed(2)}, ZL13:$${zlema13.toFixed(2)}, ZL34:$${zlema34.toFixed(2)})`;
     }
 
     // 2. Momentum & Exhaustion: RSI(14)
@@ -3347,8 +3360,9 @@ export class CryptoDedicatedStrategyEngine {
 
     // 5. Final Confluence Synthesis: Strict Anti-Trap Trend Filter
     // NEVER buy a green candle inside a macro downtrend (below 50 EMA) - prevents Bull Traps in chop!
-    // 5. Momentum & Trend Oscillator: MACD (12, 26, 9)
-    const macdData = this.calculateMACD(closes, 12, 26, 9);
+    // 5. Zero-Lag Momentum & Trend Oscillator: Zero-Lag MACD (ZLMACD) (12, 26, 9)
+    // Completely eliminates standard MACD 6-9 bar phase lag!
+    const macdData = this.calculateZeroLagMACD(closes, 12, 26, 9);
     const mLen = macdData.macdLine.length;
     const currMacd = mLen > 0 ? macdData.macdLine[mLen - 1] : 0;
     const prevMacd = mLen > 1 ? macdData.macdLine[mLen - 2] : currMacd;
@@ -3362,12 +3376,12 @@ export class CryptoDedicatedStrategyEngine {
     const isMacdBullish = currMacd >= currSignal || currHist > 0 || isBullishCross;
     const isMacdBearish = currMacd <= currSignal || currHist < 0 || isBearishCross;
     const macdReason = isBullishCross
-      ? `MACD Bullish Cross: Line (${currMacd.toFixed(4)}) crossed above Signal (${currSignal.toFixed(4)})`
+      ? `Zero-Lag MACD Bullish Cross: Line (${currMacd.toFixed(4)}) crossed above Signal (${currSignal.toFixed(4)})`
       : (isBearishCross
-          ? `MACD Bearish Cross: Line (${currMacd.toFixed(4)}) crossed below Signal (${currSignal.toFixed(4)})`
+          ? `Zero-Lag MACD Bearish Cross: Line (${currMacd.toFixed(4)}) crossed below Signal (${currSignal.toFixed(4)})`
           : (isMacdBullish
-              ? `MACD Bullish Momentum (Hist ${currHist.toFixed(4)} >= 0)`
-              : `MACD Bearish Momentum (Hist ${currHist.toFixed(4)} <= 0)`));
+              ? `Zero-Lag MACD Bullish Momentum (Hist ${currHist.toFixed(4)} >= 0)`
+              : `Zero-Lag MACD Bearish Momentum (Hist ${currHist.toFixed(4)} <= 0)`));
 
     const macd = {
       macdLine: currMacd,
@@ -3532,15 +3546,18 @@ export class CryptoDedicatedStrategyEngine {
       score += 15;
     }
 
-    // 2. Momentum / RSI Conviction (up to 25 points)
+    // 2. Momentum / RSI Conviction (up to 25 points) - Symmetrical Parity
     if (res.signal === 'BUY') {
-      if (lastRsi >= 50 && lastRsi <= 68) score += 25;
-      else if (lastRsi > 68 && lastRsi <= 72) score += 15;
+      if (lastRsi >= 50 && lastRsi <= 68) score += 25; // Bullish momentum continuation
+      else if (lastRsi >= 32 && lastRsi < 50) score += 25; // Oversold dip reversal long
+      else if (lastRsi > 68 && lastRsi <= 75) score += 15; // Strong bull trend expansion
+      else if (lastRsi >= 25 && lastRsi < 32) score += 15; // Deep oversold bounce
       else score += 10;
     } else {
-      if (lastRsi >= 32 && lastRsi <= 50) score += 25;
-      else if (lastRsi > 50) score += 25; // Overbought peak reversal short
-      else if (lastRsi >= 28 && lastRsi < 32) score += 15;
+      if (lastRsi >= 32 && lastRsi <= 50) score += 25; // Bearish momentum continuation
+      else if (lastRsi > 50 && lastRsi <= 68) score += 25; // Overbought peak reversal short
+      else if (lastRsi >= 25 && lastRsi < 32) score += 15; // Strong bear trend expansion
+      else if (lastRsi > 68 && lastRsi <= 75) score += 15; // Deep overbought rejection
       else score += 10;
     }
 

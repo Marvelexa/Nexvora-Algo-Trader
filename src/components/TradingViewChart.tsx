@@ -27,7 +27,7 @@ interface TradingViewChartProps {
   recentTrades: LiveTrade[];
 }
 
-export const TradingViewChart: React.FC<TradingViewChartProps> = ({
+export const TradingViewChart: React.FC<TradingViewChartProps> = React.memo(({
   ticker,
   currency,
   inrRate,
@@ -48,6 +48,7 @@ export const TradingViewChart: React.FC<TradingViewChartProps> = ({
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [secondsRemaining, setSecondsRemaining] = useState<number>(60);
   const [candleCountDisplay, setCandleCountDisplay] = useState<number>(0);
+  const lastCandleUpdateRef = useRef<number>(0);
 
   const symbol = ticker?.symbol || 'BTCUSDT';
   const baseAsset = symbol.replace('USDT', '');
@@ -96,8 +97,7 @@ export const TradingViewChart: React.FC<TradingViewChartProps> = ({
     };
   }, [symbol, timeframe]);
 
-  // 2. Real-Time Active Candle Timer & Advancer (Never get stuck on one candle!)
-  // Regularly computes seconds remaining and seals candle when timeframe finishes to start a new one
+  // 2. Real-Time Active Candle Timer & Advancer (Optimized: 1s interval, only seals on boundary)
   useEffect(() => {
     const timer = setInterval(() => {
       const intervalMs = getTimeframeMs(timeframe);
@@ -132,18 +132,21 @@ export const TradingViewChart: React.FC<TradingViewChartProps> = ({
 
         return prev;
       });
-    }, 500);
+    }, 1000);
 
     return () => clearInterval(timer);
   }, [timeframe, ticker?.price]);
 
-  // 3. Real-Time Active Candle Mutator (0ms Live Socket Sync)
-  // When live price arrives from WebSocket, dynamically expand high, low, close
+  // 3. Real-Time Active Candle Mutator (Throttled to 4fps to prevent GPU burn)
   useEffect(() => {
     if (!ticker || klines.length === 0) return;
+    const now = Date.now();
+    // Throttle SVG candle updates to max once every 250ms (or on new candle start)
+    if (now - lastCandleUpdateRef.current < 250) return;
+    lastCandleUpdateRef.current = now;
+
     const currentPrice = ticker.price;
     const intervalMs = getTimeframeMs(timeframe);
-    const now = Date.now();
 
     setKlines((prev) => {
       if (prev.length === 0) return prev;
@@ -929,4 +932,4 @@ export const TradingViewChart: React.FC<TradingViewChartProps> = ({
       </div>
     </div>
   );
-};
+});

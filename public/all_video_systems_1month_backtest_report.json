@@ -1,0 +1,1220 @@
+[
+  {
+    "port": 3001,
+    "name": "System 3001 (Zero-Lag Price Action Engine)",
+    "totalTrades": 50,
+    "wins": 23,
+    "losses": 20,
+    "breakevens": 7,
+    "winRate": 46,
+    "grossProfit": 536.56,
+    "grossLoss": 297.13,
+    "netPnL": 239.43,
+    "profitFactor": 1.81,
+    "avgRR": 2.79,
+    "maxDrawdown": 53.15,
+    "coinBreakdown": {
+      "BTCUSDT": {
+        "trades": 3,
+        "wins": 1,
+        "losses": 2,
+        "winRate": 33.3,
+        "netPnL": -3.74
+      },
+      "ETHUSDT": {
+        "trades": 7,
+        "wins": 5,
+        "losses": 2,
+        "winRate": 71.4,
+        "netPnL": 91.36
+      },
+      "SOLUSDT": {
+        "trades": 3,
+        "wins": 1,
+        "losses": 1,
+        "winRate": 33.3,
+        "netPnL": 16.43
+      },
+      "XRPUSDT": {
+        "trades": 4,
+        "wins": 2,
+        "losses": 0,
+        "winRate": 50,
+        "netPnL": 24.08
+      },
+      "DOGEUSDT": {
+        "trades": 4,
+        "wins": 3,
+        "losses": 1,
+        "winRate": 75,
+        "netPnL": 49.84
+      },
+      "ADAUSDT": {
+        "trades": 8,
+        "wins": 2,
+        "losses": 4,
+        "winRate": 25,
+        "netPnL": -32.9
+      },
+      "AVAXUSDT": {
+        "trades": 8,
+        "wins": 5,
+        "losses": 3,
+        "winRate": 62.5,
+        "netPnL": 74.37
+      },
+      "SUIUSDT": {
+        "trades": 7,
+        "wins": 2,
+        "losses": 3,
+        "winRate": 28.6,
+        "netPnL": 25.99
+      },
+      "BNBUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "LINKUSDT": {
+        "trades": 6,
+        "wins": 2,
+        "losses": 4,
+        "winRate": 33.3,
+        "netPnL": -5.99
+      }
+    }
+  },
+  {
+    "port": 3025,
+    "name": "System 3025 (Brad Goh Reversal Engine - PkAtVH6YVM8)",
+    "totalTrades": 88,
+    "wins": 35,
+    "losses": 40,
+    "breakevens": 13,
+    "winRate": 39.8,
+    "grossProfit": 819.21,
+    "grossLoss": 649.86,
+    "netPnL": 169.35,
+    "profitFactor": 1.26,
+    "avgRR": 2.67,
+    "maxDrawdown": 121.33,
+    "coinBreakdown": {
+      "BTCUSDT": {
+        "trades": 5,
+        "wins": 1,
+        "losses": 2,
+        "winRate": 20,
+        "netPnL": -13.1
+      },
+      "ETHUSDT": {
+        "trades": 10,
+        "wins": 5,
+        "losses": 4,
+        "winRate": 50,
+        "netPnL": 58.73
+      },
+      "SOLUSDT": {
+        "trades": 10,
+        "wins": 3,
+        "losses": 5,
+        "winRate": 30,
+        "netPnL": -18.17
+      },
+      "XRPUSDT": {
+        "trades": 6,
+        "wins": 3,
+        "losses": 1,
+        "winRate": 50,
+        "netPnL": 48.01
+      },
+      "DOGEUSDT": {
+        "trades": 10,
+        "wins": 5,
+        "losses": 4,
+        "winRate": 50,
+        "netPnL": 63.17
+      },
+      "ADAUSDT": {
+        "trades": 11,
+        "wins": 3,
+        "losses": 6,
+        "winRate": 27.3,
+        "netPnL": -40.88
+      },
+      "AVAXUSDT": {
+        "trades": 14,
+        "wins": 7,
+        "losses": 7,
+        "winRate": 50,
+        "netPnL": 51.86
+      },
+      "SUIUSDT": {
+        "trades": 10,
+        "wins": 2,
+        "losses": 5,
+        "winRate": 20,
+        "netPnL": -29.76
+      },
+      "BNBUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "LINKUSDT": {
+        "trades": 12,
+        "wins": 6,
+        "losses": 6,
+        "winRate": 50,
+        "netPnL": 49.5
+      }
+    }
+  },
+  {
+    "port": 3004,
+    "name": "System 3004 (HBA Candlesticks & Trendlines - d9Qe6m90z6Y)",
+    "totalTrades": 6,
+    "wins": 4,
+    "losses": 2,
+    "breakevens": 0,
+    "winRate": 66.7,
+    "grossProfit": 100.29,
+    "grossLoss": 33.3,
+    "netPnL": 66.99,
+    "profitFactor": 3.01,
+    "avgRR": 2.81,
+    "maxDrawdown": 33.3,
+    "coinBreakdown": {
+      "BTCUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "ETHUSDT": {
+        "trades": 1,
+        "wins": 1,
+        "losses": 0,
+        "winRate": 100,
+        "netPnL": 10.18
+      },
+      "SOLUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "XRPUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "DOGEUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "ADAUSDT": {
+        "trades": 1,
+        "wins": 1,
+        "losses": 0,
+        "winRate": 100,
+        "netPnL": 41.34
+      },
+      "AVAXUSDT": {
+        "trades": 1,
+        "wins": 1,
+        "losses": 0,
+        "winRate": 100,
+        "netPnL": 29.6
+      },
+      "SUIUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "BNBUSDT": {
+        "trades": 1,
+        "wins": 1,
+        "losses": 0,
+        "winRate": 100,
+        "netPnL": 19.17
+      },
+      "LINKUSDT": {
+        "trades": 2,
+        "wins": 0,
+        "losses": 2,
+        "winRate": 0,
+        "netPnL": -33.3
+      }
+    }
+  },
+  {
+    "port": 3002,
+    "name": "System 3002 (Whiteboard Crypto DeFi AMM Snapback)",
+    "totalTrades": 34,
+    "wins": 11,
+    "losses": 15,
+    "breakevens": 8,
+    "winRate": 32.4,
+    "grossProfit": 195.51,
+    "grossLoss": 167.61,
+    "netPnL": 27.9,
+    "profitFactor": 1.17,
+    "avgRR": 2.71,
+    "maxDrawdown": 80.34,
+    "coinBreakdown": {
+      "BTCUSDT": {
+        "trades": 4,
+        "wins": 1,
+        "losses": 1,
+        "winRate": 25,
+        "netPnL": 1.58
+      },
+      "ETHUSDT": {
+        "trades": 5,
+        "wins": 2,
+        "losses": 2,
+        "winRate": 40,
+        "netPnL": 22.61
+      },
+      "SOLUSDT": {
+        "trades": 3,
+        "wins": 2,
+        "losses": 1,
+        "winRate": 66.7,
+        "netPnL": 15.77
+      },
+      "XRPUSDT": {
+        "trades": 4,
+        "wins": 1,
+        "losses": 1,
+        "winRate": 25,
+        "netPnL": 29.04
+      },
+      "DOGEUSDT": {
+        "trades": 2,
+        "wins": 1,
+        "losses": 1,
+        "winRate": 50,
+        "netPnL": -2.45
+      },
+      "ADAUSDT": {
+        "trades": 3,
+        "wins": 0,
+        "losses": 2,
+        "winRate": 0,
+        "netPnL": -34.28
+      },
+      "AVAXUSDT": {
+        "trades": 5,
+        "wins": 1,
+        "losses": 3,
+        "winRate": 20,
+        "netPnL": -16.05
+      },
+      "SUIUSDT": {
+        "trades": 6,
+        "wins": 1,
+        "losses": 4,
+        "winRate": 16.7,
+        "netPnL": -27.57
+      },
+      "BNBUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "LINKUSDT": {
+        "trades": 2,
+        "wins": 2,
+        "losses": 0,
+        "winRate": 100,
+        "netPnL": 39.24
+      }
+    }
+  },
+  {
+    "port": 3005,
+    "name": "System 3005 (HBA Fibonacci Golden Pocket - Kdf0v24npt8)",
+    "totalTrades": 23,
+    "wins": 7,
+    "losses": 9,
+    "breakevens": 7,
+    "winRate": 30.4,
+    "grossProfit": 136.34,
+    "grossLoss": 126.13,
+    "netPnL": 10.21,
+    "profitFactor": 1.08,
+    "avgRR": 2.35,
+    "maxDrawdown": 64.19,
+    "coinBreakdown": {
+      "BTCUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "ETHUSDT": {
+        "trades": 5,
+        "wins": 0,
+        "losses": 4,
+        "winRate": 0,
+        "netPnL": -46.19
+      },
+      "SOLUSDT": {
+        "trades": 3,
+        "wins": 1,
+        "losses": 1,
+        "winRate": 33.3,
+        "netPnL": 5.03
+      },
+      "XRPUSDT": {
+        "trades": 2,
+        "wins": 0,
+        "losses": 1,
+        "winRate": 0,
+        "netPnL": -10.8
+      },
+      "DOGEUSDT": {
+        "trades": 2,
+        "wins": 2,
+        "losses": 0,
+        "winRate": 100,
+        "netPnL": 41.48
+      },
+      "ADAUSDT": {
+        "trades": 3,
+        "wins": 2,
+        "losses": 0,
+        "winRate": 66.7,
+        "netPnL": 25.38
+      },
+      "AVAXUSDT": {
+        "trades": 2,
+        "wins": 1,
+        "losses": 1,
+        "winRate": 50,
+        "netPnL": -1.62
+      },
+      "SUIUSDT": {
+        "trades": 2,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 1
+      },
+      "BNBUSDT": {
+        "trades": 1,
+        "wins": 1,
+        "losses": 0,
+        "winRate": 100,
+        "netPnL": 23.64
+      },
+      "LINKUSDT": {
+        "trades": 3,
+        "wins": 0,
+        "losses": 2,
+        "winRate": 0,
+        "netPnL": -27.7
+      }
+    }
+  },
+  {
+    "port": 3006,
+    "name": "System 3006 (Craig Percoco Smart Money FVG - 9Lpnd8i-8iM)",
+    "totalTrades": 0,
+    "wins": 0,
+    "losses": 0,
+    "breakevens": 0,
+    "winRate": 0,
+    "grossProfit": 0,
+    "grossLoss": 0,
+    "netPnL": 0,
+    "profitFactor": 0,
+    "avgRR": 0,
+    "maxDrawdown": 0,
+    "coinBreakdown": {
+      "BTCUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "ETHUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "SOLUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "XRPUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "DOGEUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "ADAUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "AVAXUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "SUIUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "BNBUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "LINKUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      }
+    }
+  },
+  {
+    "port": 3008,
+    "name": "System 3008 (Charuka Wyckoff VSA Strategy)",
+    "totalTrades": 0,
+    "wins": 0,
+    "losses": 0,
+    "breakevens": 0,
+    "winRate": 0,
+    "grossProfit": 0,
+    "grossLoss": 0,
+    "netPnL": 0,
+    "profitFactor": 0,
+    "avgRR": 0,
+    "maxDrawdown": 0,
+    "coinBreakdown": {
+      "BTCUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "ETHUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "SOLUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "XRPUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "DOGEUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "ADAUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "AVAXUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "SUIUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "BNBUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "LINKUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      }
+    }
+  },
+  {
+    "port": 3010,
+    "name": "System 3010 (Stock Burner Trap Engine)",
+    "totalTrades": 0,
+    "wins": 0,
+    "losses": 0,
+    "breakevens": 0,
+    "winRate": 0,
+    "grossProfit": 0,
+    "grossLoss": 0,
+    "netPnL": 0,
+    "profitFactor": 0,
+    "avgRR": 0,
+    "maxDrawdown": 0,
+    "coinBreakdown": {
+      "BTCUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "ETHUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "SOLUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "XRPUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "DOGEUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "ADAUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "AVAXUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "SUIUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "BNBUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "LINKUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      }
+    }
+  },
+  {
+    "port": 3012,
+    "name": "System 3012 (IITian Trader Institutional Method)",
+    "totalTrades": 0,
+    "wins": 0,
+    "losses": 0,
+    "breakevens": 0,
+    "winRate": 0,
+    "grossProfit": 0,
+    "grossLoss": 0,
+    "netPnL": 0,
+    "profitFactor": 0,
+    "avgRR": 0,
+    "maxDrawdown": 0,
+    "coinBreakdown": {
+      "BTCUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "ETHUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "SOLUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "XRPUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "DOGEUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "ADAUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "AVAXUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "SUIUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "BNBUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "LINKUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      }
+    }
+  },
+  {
+    "port": 3013,
+    "name": "System 3013 (Neeraj Joshi Crypto Strategy)",
+    "totalTrades": 0,
+    "wins": 0,
+    "losses": 0,
+    "breakevens": 0,
+    "winRate": 0,
+    "grossProfit": 0,
+    "grossLoss": 0,
+    "netPnL": 0,
+    "profitFactor": 0,
+    "avgRR": 0,
+    "maxDrawdown": 0,
+    "coinBreakdown": {
+      "BTCUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "ETHUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "SOLUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "XRPUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "DOGEUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "ADAUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "AVAXUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "SUIUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "BNBUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "LINKUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      }
+    }
+  },
+  {
+    "port": 3014,
+    "name": "System 3014 (VirtualBacon 7-Year Crypto Strategy)",
+    "totalTrades": 0,
+    "wins": 0,
+    "losses": 0,
+    "breakevens": 0,
+    "winRate": 0,
+    "grossProfit": 0,
+    "grossLoss": 0,
+    "netPnL": 0,
+    "profitFactor": 0,
+    "avgRR": 0,
+    "maxDrawdown": 0,
+    "coinBreakdown": {
+      "BTCUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "ETHUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "SOLUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "XRPUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "DOGEUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "ADAUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "AVAXUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "SUIUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "BNBUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "LINKUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      }
+    }
+  },
+  {
+    "port": 3015,
+    "name": "System 3015 (Thomas Kralow Institutional Strategy)",
+    "totalTrades": 0,
+    "wins": 0,
+    "losses": 0,
+    "breakevens": 0,
+    "winRate": 0,
+    "grossProfit": 0,
+    "grossLoss": 0,
+    "netPnL": 0,
+    "profitFactor": 0,
+    "avgRR": 0,
+    "maxDrawdown": 0,
+    "coinBreakdown": {
+      "BTCUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "ETHUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "SOLUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "XRPUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "DOGEUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "ADAUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "AVAXUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "SUIUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "BNBUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "LINKUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      }
+    }
+  },
+  {
+    "port": 3003,
+    "name": "System 3003 (HBA Market Structure Breakout - 7PPuMzuzMek)",
+    "totalTrades": 15,
+    "wins": 2,
+    "losses": 8,
+    "breakevens": 5,
+    "winRate": 13.3,
+    "grossProfit": 34.36,
+    "grossLoss": 46.26,
+    "netPnL": -11.9,
+    "profitFactor": 0.74,
+    "avgRR": 2.27,
+    "maxDrawdown": 32,
+    "coinBreakdown": {
+      "BTCUSDT": {
+        "trades": 4,
+        "wins": 0,
+        "losses": 3,
+        "winRate": 0,
+        "netPnL": -17.05
+      },
+      "ETHUSDT": {
+        "trades": 5,
+        "wins": 0,
+        "losses": 2,
+        "winRate": 0,
+        "netPnL": -10.14
+      },
+      "SOLUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "XRPUSDT": {
+        "trades": 1,
+        "wins": 1,
+        "losses": 0,
+        "winRate": 100,
+        "netPnL": 6.7
+      },
+      "DOGEUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "ADAUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "AVAXUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "SUIUSDT": {
+        "trades": 1,
+        "wins": 0,
+        "losses": 1,
+        "winRate": 0,
+        "netPnL": -1.89
+      },
+      "BNBUSDT": {
+        "trades": 4,
+        "wins": 1,
+        "losses": 2,
+        "winRate": 25,
+        "netPnL": 10.48
+      },
+      "LINKUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      }
+    }
+  },
+  {
+    "port": 3007,
+    "name": "System 3007 (Marwadi Trader Trap & Sidhant World Champion)",
+    "totalTrades": 21,
+    "wins": 6,
+    "losses": 10,
+    "breakevens": 5,
+    "winRate": 28.6,
+    "grossProfit": 180.54,
+    "grossLoss": 205.45,
+    "netPnL": -24.91,
+    "profitFactor": 0.88,
+    "avgRR": 2.53,
+    "maxDrawdown": 85.06,
+    "coinBreakdown": {
+      "BTCUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "ETHUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "SOLUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "XRPUSDT": {
+        "trades": 2,
+        "wins": 0,
+        "losses": 1,
+        "winRate": 0,
+        "netPnL": -22.82
+      },
+      "DOGEUSDT": {
+        "trades": 9,
+        "wins": 2,
+        "losses": 3,
+        "winRate": 22.2,
+        "netPnL": 7.31
+      },
+      "ADAUSDT": {
+        "trades": 2,
+        "wins": 0,
+        "losses": 2,
+        "winRate": 0,
+        "netPnL": -49.94
+      },
+      "AVAXUSDT": {
+        "trades": 4,
+        "wins": 2,
+        "losses": 2,
+        "winRate": 50,
+        "netPnL": 39.56
+      },
+      "SUIUSDT": {
+        "trades": 2,
+        "wins": 1,
+        "losses": 1,
+        "winRate": 50,
+        "netPnL": 7.7
+      },
+      "BNBUSDT": {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winRate": 0,
+        "netPnL": 0
+      },
+      "LINKUSDT": {
+        "trades": 2,
+        "wins": 1,
+        "losses": 1,
+        "winRate": 50,
+        "netPnL": -6.73
+      }
+    }
+  }
+]

@@ -91,14 +91,30 @@ export interface KlinePoint {
   volume: number;
 }
 
+export interface AccountCredentialStatus {
+  hasApiKey: boolean;
+  hasApiSecret: boolean;
+  maskedApiKey: string;
+  endpoint: string;
+  exchangeName: string;
+  region?: 'INDIA' | 'GLOBAL';
+}
+
 export interface ExchangeStatus {
   hasApiKey: boolean;
   hasApiSecret: boolean;
   maskedApiKey: string;
   exchange: string;
   isSimulation: boolean;
+  isTestnet?: boolean;
+  tradingMode?: 'DELTA_TESTNET' | 'LIVE_DELTA_INDIA' | 'LIVE_DELTA_GLOBAL' | 'SIMULATION_PAPER';
+  activeMode?: 'DELTA_TESTNET' | 'LIVE_DELTA_INDIA' | 'LIVE_DELTA_GLOBAL' | 'SIMULATION_PAPER';
+  endpoint?: string;
   connected?: boolean;
   error?: string;
+  updatedAt?: number;
+  demo?: AccountCredentialStatus;
+  live?: AccountCredentialStatus;
 }
 
 export interface AssetBalance {
@@ -128,6 +144,7 @@ export interface DeltaPosition {
   isBreakevenLocked: boolean;
   pnlUSD: number;
   pnlPercent: number;
+  exchangePnl?: number;
   entryTime: number;
   strategyName: string;
   shadowConfirmedSeconds: number;
@@ -135,6 +152,45 @@ export interface DeltaPosition {
   reversalReason?: string;
   highestPnlUSD?: number;
   isProfitLockArmed?: boolean;
+  instrumentType?: string;
+  optionType?: 'CALL' | 'PUT';
+  strike?: number;
+  expiry?: string;
+  tp1Price?: number;
+  tp2Price?: number;
+  tp1Ratio?: number;
+  tp2Ratio?: number;
+  tp1Hit?: boolean;
+  earlyBreakevenPrice?: number;
+  riskDistance?: number;
+  isRiskRecycled?: boolean;
+  peakPriceReached?: number;
+  peakRReached?: number;
+  ratchetStage?: number;
+  opposingZonePrice?: number;
+  roomToRunDistance?: number;
+  isFastScalp?: boolean;
+  slotType?: 'FAST_SCALP' | 'SNIPER_RUNNER';
+  tier?: 'STRONG_23PCT_RUNNER' | 'NORMAL_5_TO_8_USD_SCALP';
+  seatBucket?: 'CHOP_15PCT_SEAT' | 'NORMAL_23_TO_40PCT_SEAT' | 'OPTION_UNCAPPED_SEAT' | 'BIG_SIGNAL_SEAT' | 'OPTION_SEAT' | 'CHOP_NORMAL_SEAT';
+  expectedRoePct?: number;
+  grossRoePct?: number;
+  netRoeAfterFeesPct?: number;
+  breakevenPlusFeeTriggerPrice?: number;
+  breakevenPlusFeeLockPrice?: number;
+  runner23PctTriggerPrice?: number;
+  runner18PctLockPrice?: number;
+  optionTrailingPeakPrice?: number;
+  optionTickSize?: number;
+  spotSlPrice?: number;
+  spotTpPrice?: number;
+  spotEntryPrice?: number;
+  underlyingAsset?: 'BTC' | 'ETH';
+  trailTriggerPrice?: number;
+  trailActivationPrice?: number;
+  trailLockPrice?: number;
+  customSL?: number;
+  targetProfitUSD?: number;
 }
 
 export interface DeltaClosedTrade {
@@ -143,13 +199,15 @@ export interface DeltaClosedTrade {
   side: 'BUY' | 'SELL';
   entryPrice: number;
   exitPrice: number;
+  takeProfitPrice?: number;
+  stopLossPrice?: number;
   quantity: number;
   marginUSD: number;
   notionalUSD: number;
   pnlUSD: number;
   pnlPercent: number;
   rMultiple: number;
-  exitReason: 'TARGET_HIT' | 'STOP_LOSS_HIT' | 'BREAKEVEN_HIT' | 'MANUAL_EXIT' | 'EXCHANGE_CLOSED' | 'REVERSAL_PROFIT_LOCKED' | 'TIME_STOP_EXIT' | 'EXHAUSTION_EXIT' | 'REVERSAL_EXIT_EARLY';
+  exitReason: 'TARGET_HIT' | 'STOP_LOSS_HIT' | 'BREAKEVEN_HIT' | 'MANUAL_EXIT' | 'EXCHANGE_CLOSED' | 'REVERSAL_PROFIT_LOCKED' | 'TIME_STOP_EXIT' | 'EXHAUSTION_EXIT' | 'REVERSAL_EXIT_EARLY' | 'WALL_REVERSAL_EXIT' | 'REVERSAL_WALL_HIT';
   entryTime: number;
   exitTime: number;
   durationMs: number;
@@ -442,6 +500,7 @@ export interface AssetDiagnostics {
 }
 
 export interface DeltaAutoTraderState {
+  activeSystem?: string;
   isRunning: boolean;
   mode: 'LIVE_DELTA_INDIA' | 'DELTA_TESTNET' | 'SIMULATION_PAPER';
   accountCapitalUSD: number;

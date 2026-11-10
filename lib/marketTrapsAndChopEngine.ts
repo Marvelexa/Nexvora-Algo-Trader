@@ -411,27 +411,11 @@ export class MarketTrapsAndChopEngine {
     }
 
     if (marketStructure === 'UPTREND' && side === 'SELL') {
-      const isReversalOrResistance = setupType?.includes('LIQUIDITY_SWEEP') ||
-        setupType?.includes('REJECTION_PIN_BAR') ||
-        setupType?.includes('ENGULFING_AT_LEVEL') ||
-        setupType?.includes('Reversal & Zigzag') ||
-        setupType?.includes('Divergence') ||
-        setupType?.includes('Breakout') ||
-        setupType?.includes('BREAKOUT') ||
-        setupType?.includes('Compression') ||
-        setupType?.includes('Resistance') ||
-        setupType?.includes('Playbook 2026 Engine') ||
-        setupType?.includes('Quant Math') ||
-        setupType?.includes('Dedicated Indicator') ||
-        levelType === 'RESISTANCE' ||
-        (upperWick / barRange) >= 0.25 ||
-        lastBar.close < lastBar.open;
-
-      if (!isReversalOrResistance) {
+      if (!setupType?.includes('LIQUIDITY_SWEEP')) {
         return {
           isBlockedByTrap: true,
           trapType: 'FALLING_KNIFE_INDICATOR_TRAP',
-          trapReason: `[TRAP 7: OVERBOUGHT CONTINUATION] Counter-trend SELL in active UPTREND without resistance rejection or reversal trigger. Standing aside.`,
+          trapReason: `[TRAP 7: OVERBOUGHT CONTINUATION] Counter-trend SELL in active UPTREND. Overbought conditions persist in uptrends.`,
           recommendedAction: 'STAND_ASIDE',
         };
       }

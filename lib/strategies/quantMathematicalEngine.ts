@@ -1,0 +1,1320 @@
+import { CryptoDedicatedStrategyEngine } from './cryptoDedicatedStrategyEngine';
+import { MicrostructureDerivativesData } from '../deltaExchangeEngine';
+
+export interface KlinePoint {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+/**
+ * =========================================================================
+ * CRYPTO SIGNAL PLAYBOOK 2026 & BEYOND: QUANTITATIVE DUAL-ENGINE SYSTEM
+ * =========================================================================
+ * 
+ * Architecture v2:
+ * 1. Data Layers (OHLCV, Order Book, Trades/CVD, Derivatives/OI/Funding)
+ * 2. Regime Detection Gate (CI, ADX, KER, Variance Ratio, Hurst, Volatility Percentile)
+ * 3. Signal Groups (1 Vote Per Group, Max 100, Clean Score Scale):
+ *    - Group A: Trend / Momentum (Max 20 pts)
+ *    - Group B: Mean-Reversion / Oscillators (Max 20 pts)
+ *    - Group C: Volatility / Squeeze (Max 10 pts)
+ *    - Group D: Structure (S/R Hold & Confirmed Break) (Max 20 pts)
+ *    - Group E: Order Flow & Microstructure (CVD, OBI) (Max 20 pts)
+ *    - Group F: Derivatives & Positioning (Funding, OI Matrix) (Max 10 pts)
+ * 4. Regime-Driven Strategy Selection:
+ *    - TREND: Enables momentum & breakouts, blocks counter-trend mean-reversion
+ *    - RANGE: Enables mean-reversion & S/R bounces, blocks breakout chasing
+ *    - CHAOS / EXTREME VOL: Blocks trade execution (capital protection)
+ * 5. Execution Threshold: >= 70 points on 0-100 scale.
+ * =========================================================================
+ */
+
+export interface QuantMathVerdict {
+  symbol: string;
+  quantScore: number; // Clean 0 to 100 scale (Execution threshold: >= 70)
+  recommendedSide: 'BUY' | 'SELL' | null;
+  marketRegime: 'TREND' | 'RANGE' | 'CHAOS_NO_TRADE' | 'VOL_EXTREME_DANGER' | 'TRENDING_PERSISTENT' | 'MEAN_REVERTING' | 'RANDOM_WALK_CHOP';
+  regimeReason?: string;
+  
+  // Statistical & DSP Indicator Values
+  hurstExponent: number;
+  varianceRatio?: number;
+  efficiencyRatio: number;
+  choppinessIndex?: number;
+  adx?: number;
+  volatilityPercentile?: number;
+  
+  fisherTransform: number;
+  fisherSignal: number;
+  superSmootherPrice: number;
+  superSmootherSlope: number;
+  kalmanEstimate: number;
+  kalmanDeviationPct: number;
+  zScore: number;
+
+  // Modern Quant Suite (System 3)
+  kama?: { currentKama: number; slope: number; er: number };
+  stc?: { stc: number; isCycleBullish: boolean; isCycleBearish: boolean };
+  cmo?: number;
+  vwapBands?: { vwap: number; upperBand: number; lowerBand: number; isPriceAboveVwap: boolean; isPriceAboveUpperBand: boolean; isPriceBelowLowerBand: boolean };
+  vortex?: { viPlus: number; viMinus: number; isBullish: boolean; isBearish: boolean };
+  
+  // Structure & S/R Breakout (PDF Priority 4)
+  nearestSupport?: number;
+  nearestResistance?: number;
+  isAtSupport?: boolean;
+  isAtResistance?: boolean;
+  supportBounceConfirmed?: boolean;
+  supportBreakConfirmed?: boolean;
+  resistanceRejectConfirmed?: boolean;
+  resistanceBreakConfirmed?: boolean;
+
+  // Group Breakdown (1 Vote per Group, Max 100)
+  scores?: {
+    groupA_trend: number;       // Max 20
+    groupB_meanRevert: number;   // Max 20
+    groupC_volatility: number;   // Max 10
+    groupD_structure: number;    // Max 20
+    groupE_orderFlow: number;    // Max 20
+    groupF_derivatives: number;  // Max 10
+    totalBuyScore: number;
+    totalSellScore: number;
+  };
+
+  microstructure?: {
+    obi: number;
+    cvd: number;
+    takerBuyRatio: number;
+    fundingRate: number;
+    openInterest: number;
+  };
+
+  reasons: string[];
+}
+
+export class QuantMathematicalEngine {
+  /**
+   * 1. John Ehlers 2-Pole SuperSmoother Filter
+   * 2nd-order Butterworth DSP filter removing noise while preserving trend direction.
+   * Reference: John F. Ehlers, "Cybernetic Analysis for Stocks and Futures"
+   */
+  public static calculateSuperSmoother(closes: number[], cutoffPeriod: number = 10): number[] {
+    const n = closes.length;
+    if (n === 0) return [];
+    if (n < 3) return [...closes];
+
+    const a1 = Math.exp(-1.414 * Math.PI / cutoffPeriod);
+    const b1 = 2 * a1 * Math.cos(1.414 * Math.PI / cutoffPeriod);
+    const c2 = b1;
+    const c3 = -a1 * a1;
+    const c1 = 1 - c2 - c3;
+
+    const smooth: number[] = new Array(n);
+    smooth[0] = closes[0];
+    smooth[1] = closes[1];
+
+    for (let i = 2; i < n; i++) {
+      const p = (closes[i] + closes[i - 1]) / 2;
+      smooth[i] = c1 * p + c2 * smooth[i - 1] + c3 * smooth[i - 2];
+    }
+    return smooth;
+  }
+
+  /**
+   * 2. John Ehlers Fisher Transform
+   * Normalizes bounded price oscillations into Gaussian probability distribution.
+   * Signal: Fisher crosses its 1-bar-lag line from an extreme.
+   */
+  public static calculateFisherTransform(candles: KlinePoint[], period: number = 10): { fisher: number[]; signal: number[] } {
+    const n = candles.length;
+    if (n < period) return { fisher: [], signal: [] };
+
+    const fisher: number[] = new Array(n).fill(0);
+    const signal: number[] = new Array(n).fill(0);
+    let prevVal = 0;
+    let prevFisher = 0;
+
+    for (let i = period - 1; i < n; i++) {
+      const window = candles.slice(i - period + 1, i + 1);
+      const high = Math.max(...window.map(c => c.high));
+      const low = Math.min(...window.map(c => c.low));
+      const range = Math.max(0.000001, high - low);
+      const mid = (candles[i].high + candles[i].low) / 2;
+
+      let rawVal = 0.33 * 2 * ((mid - low) / range - 0.5) + 0.67 * prevVal;
+      rawVal = Math.max(-0.999, Math.min(0.999, rawVal));
+      prevVal = rawVal;
+
+      const fish = 0.5 * Math.log((1 + rawVal) / (1 - rawVal)) + 0.5 * prevFisher;
+      fisher[i] = fish;
+      signal[i] = prevFisher;
+      prevFisher = fish;
+    }
+    return { fisher, signal };
+  }
+
+  private static rescaledRange(seg: number[]): number {
+    const n = seg.length;
+    const mean = seg.reduce((a, b) => a + b, 0) / n;
+    let cum = 0, minC = 0, maxC = 0, ss = 0;
+    for (const v of seg) {
+      const d = v - mean;
+      cum += d;
+      if (cum < minC) minC = cum;
+      if (cum > maxC) maxC = cum;
+      ss += d * d;
+    }
+    const sd = Math.sqrt(ss / n);
+    return sd > 0 ? (maxC - minC) / sd : 0;
+  }
+
+  // Pre-calculated Monte Carlo noise baseline (trials = 5000 on i.i.d Gaussian noise)
+  // For R/S analysis, empirical noise expectation E[R/S] at lag n:
+  // lag 8: ~2.632, lag 16: ~4.022, lag 24: ~5.105, lag 32: ~6.025, lag 64: ~8.974
+  private static readonly NOISE_RS_BASELINE: Record<number, number> = {
+    8: 2.632,
+    16: 4.022,
+    24: 5.105,
+    32: 6.025,
+    64: 8.974,
+  };
+
+  /**
+   * 3. Hurst Exponent (Rescaled Range Analysis - R/S with Noise Baseline Correction)
+   * Corrected for small-sample upward bias so pure random noise centers at H ~ 0.50.
+   * - H > 0.55: Persistent / Trending market (momentum continuation)
+   * - H < 0.45: Anti-Persistent / Mean-reverting market (mean reversion bounces)
+   * - 0.45 <= H <= 0.55: Brownian Random Walk
+   */
+  public static calculateHurstExponent(closes: number[], maxLag: number = 64): number {
+    const n = closes.length;
+    if (n < 64) return 0.50;
+
+    const logReturns: number[] = [];
+    for (let i = 1; i < n; i++) {
+      logReturns.push(Math.log(closes[i] / (closes[i - 1] || 1)));
+    }
+
+    const lagSizes = [8, 16, 32, 64];
+    const logLags: number[] = [];
+    const logDeltaRS: number[] = [];
+
+    for (const lag of lagSizes) {
+      if (logReturns.length < lag) continue;
+      const numSegments = Math.floor(logReturns.length / lag);
+      if (numSegments < 2) continue;
+      let totalRS = 0;
+
+      for (let s = 0; s < numSegments; s++) {
+        const segment = logReturns.slice(s * lag, (s + 1) * lag);
+        totalRS += this.rescaledRange(segment);
+      }
+
+      const avgRS = totalRS / numSegments;
+      const noiseRS = this.NOISE_RS_BASELINE[lag] || Math.sqrt(Math.PI * lag / 2);
+      if (avgRS > 0 && noiseRS > 0) {
+        logLags.push(Math.log(lag));
+        // Baseline correction: Subtract expected random walk log(RS)
+        logDeltaRS.push(Math.log(avgRS) - Math.log(noiseRS));
+      }
+    }
+
+    if (logLags.length < 2) return 0.50;
+
+    const nPts = logLags.length;
+    const meanX = logLags.reduce((a, b) => a + b, 0) / nPts;
+    const meanY = logDeltaRS.reduce((a, b) => a + b, 0) / nPts;
+
+    let num = 0;
+    let den = 0;
+    for (let i = 0; i < nPts; i++) {
+      num += (logLags[i] - meanX) * (logDeltaRS[i] - meanY);
+      den += (logLags[i] - meanX) * (logLags[i] - meanX);
+    }
+
+    const slope = den > 0 ? num / den : 0;
+    const hurst = 0.50 + slope;
+    return Math.max(0.05, Math.min(0.95, parseFloat(hurst.toFixed(3))));
+  }
+
+  /**
+   * 4. Lo-MacKinlay Variance Ratio Test (VR, q=4)
+   * VR(q) = Var(r_q) / (q * Var(r_1))
+   * VR > 1.05 = Trending / Positive autocorrelation
+   * VR < 0.95 = Mean-Reverting / Negative autocorrelation
+   * ~1.0 = Random walk
+   */
+  public static calculateVarianceRatio(closes: number[], q: number = 4): number {
+    const n = closes.length;
+    if (n < q + 15) return 1.0;
+
+    const r1: number[] = [];
+    for (let i = 1; i < n; i++) {
+      r1.push(Math.log(closes[i] / closes[i - 1]));
+    }
+    const meanR1 = r1.reduce((a, b) => a + b, 0) / r1.length;
+    const varR1 = r1.reduce((sum, r) => sum + Math.pow(r - meanR1, 2), 0) / (r1.length - 1);
+
+    const rq: number[] = [];
+    for (let i = q; i < n; i++) {
+      rq.push(Math.log(closes[i] / closes[i - q]));
+    }
+    const meanRq = rq.reduce((a, b) => a + b, 0) / rq.length;
+    const varRq = rq.reduce((sum, r) => sum + Math.pow(r - meanRq, 2), 0) / (rq.length - 1);
+
+    if (varR1 <= 0) return 1.0;
+    const vr = varRq / (q * varR1);
+    return parseFloat(vr.toFixed(3));
+  }
+
+  /**
+   * 5. Kaufman Fractal Efficiency Ratio (KER)
+   * Ratio of net displacement to total path traveled:
+   * KER = |P_t - P_{t-n}| / Sum(|P_i - P_{i-1}|)
+   */
+  public static calculateEfficiencyRatio(closes: number[], period: number = 14): number {
+    const n = closes.length;
+    if (n < period + 1) return 0.5;
+
+    const netChange = Math.abs(closes[n - 1] - closes[n - 1 - period]);
+    let totalPath = 0;
+    for (let i = n - period; i < n; i++) {
+      totalPath += Math.abs(closes[i] - closes[i - 1]);
+    }
+    return totalPath > 0 ? parseFloat((netChange / totalPath).toFixed(3)) : 0.5;
+  }
+
+  /**
+   * 6. Volatility Percentile Rank (100-bar rolling ATR percentile)
+   * Percentile > 95: High-vol danger / blow-off (NO TRADE)
+   * Percentile < 15: Low-vol squeeze (breakout setup)
+   */
+  public static calculateVolatilityPercentile(candles: KlinePoint[], lookback: number = 100): number {
+    const n = candles.length;
+    if (n < 15) return 50;
+
+    const atrs: number[] = [];
+    for (let i = 14; i < n; i++) {
+      let sumTr = 0;
+      for (let j = i - 13; j <= i; j++) {
+        const c = candles[j];
+        const prev = candles[j - 1];
+        const tr = Math.max(c.high - c.low, Math.abs(c.high - prev.close), Math.abs(c.low - prev.close));
+        sumTr += tr;
+      }
+      atrs.push(sumTr / 14);
+    }
+
+    if (atrs.length === 0) return 50;
+    const currentAtr = atrs[atrs.length - 1] || 0;
+    const windowAtrs = atrs.slice(-lookback);
+    const countBelow = windowAtrs.filter(a => a <= currentAtr).length;
+    return parseFloat(((countBelow / windowAtrs.length) * 100).toFixed(1));
+  }
+
+  /**
+   * 7. Adaptive Kalman Optimal State Estimator
+   * Recursively estimates true market fair-value by dynamically modulating Process Noise (Q)
+   * relative to Measurement Noise (R) based on price displacement velocity:
+   * - During explosive trend/breakout: Q expands -> Kalman Gain K increases (~0.50-0.75), tracking price with near-zero lag.
+   * - During consolidating range/chop: Q contracts -> Kalman Gain K reduces (~0.12-0.18), delivering heavy noise filtering.
+   */
+  public static calculateKalmanFilter(closes: number[], baseQ: number = 0.01, baseR: number = 0.05): number[] {
+    const n = closes.length;
+    if (n === 0) return [];
+    if (n < 3) return [...closes];
+
+    const filtered: number[] = new Array(n);
+    let xHat = closes[0];
+    let pCov = 1.0;
+    filtered[0] = xHat;
+
+    for (let i = 1; i < n; i++) {
+      // Dynamic process noise based on price deviation from current state estimate
+      const dev = Math.abs(closes[i] - xHat) / (xHat || 1);
+      const qAdaptive = Math.max(0.002, Math.min(0.20, dev * 2.0));
+      const rMeasurement = baseR || 0.05;
+
+      const pPred = pCov + qAdaptive;
+      const kGain = pPred / (pPred + rMeasurement);
+      xHat = xHat + kGain * (closes[i] - xHat);
+      pCov = (1 - kGain) * pPred;
+      filtered[i] = xHat;
+    }
+    return filtered;
+  }
+
+  /**
+   * 8. Statistical Rolling Z-Score
+   * Z = (Price - Mean) / StdDev
+   */
+  public static calculateZScore(closes: number[], period: number = 20): number {
+    const n = closes.length;
+    if (n < period) return 0;
+
+    const window = closes.slice(n - period);
+    const mean = window.reduce((a, b) => a + b, 0) / period;
+    const variance = window.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / period;
+    const stdDev = Math.sqrt(variance);
+
+    if (stdDev === 0) return 0;
+    return parseFloat(((closes[n - 1] - mean) / stdDev).toFixed(2));
+  }
+
+  /**
+   * 9. TTM-Style Squeeze Detector
+   * Bollinger Bands (20, 2.0) inside Keltner Channel (20, 1.5 ATR)
+   */
+  public static isTTMSqueeze(candles: KlinePoint[]): { inSqueeze: boolean; squeezeReleased: boolean } {
+    const closes = candles.map(c => c.close);
+    const n = closes.length;
+    if (n < 20) return { inSqueeze: false, squeezeReleased: false };
+
+    const slice = closes.slice(n - 20);
+    const mean = slice.reduce((a, b) => a + b, 0) / 20;
+    const stdDev = Math.sqrt(slice.reduce((acc, v) => acc + Math.pow(v - mean, 2), 0) / 20);
+
+    const bbUpper = mean + 2.0 * stdDev;
+    const bbLower = mean - 2.0 * stdDev;
+
+    // Keltner: EMA20 +/- 1.5 * ATR
+    const atr = CryptoDedicatedStrategyEngine.calculateATR(candles, 20);
+    const kcUpper = mean + 1.5 * atr;
+    const kcLower = mean - 1.5 * atr;
+
+    const inSqueeze = bbUpper <= kcUpper && bbLower >= kcLower;
+    // Check previous bar to see if squeeze just released
+    const prevSlice = closes.slice(n - 21, n - 1);
+    let prevInSqueeze = false;
+    if (prevSlice.length === 20) {
+      const prevMean = prevSlice.reduce((a, b) => a + b, 0) / 20;
+      const prevStd = Math.sqrt(prevSlice.reduce((acc, v) => acc + Math.pow(v - prevMean, 2), 0) / 20);
+      const prevBbUpper = prevMean + 2.0 * prevStd;
+      const prevBbLower = prevMean - 2.0 * prevStd;
+      prevInSqueeze = prevBbUpper <= (prevMean + 1.5 * atr) && prevBbLower >= (prevMean - 1.5 * atr);
+    }
+
+    const squeezeReleased = prevInSqueeze && !inSqueeze;
+    return { inSqueeze, squeezeReleased };
+  }
+
+  /**
+   * 11. Kaufman's Adaptive Moving Average (KAMA)
+   * Dynamically modulates smoothing speed based on market noise Efficiency Ratio (ER).
+   * Fast like a 2-period EMA in clear trends, flat like a 30-period EMA in choppy consolidation.
+   */
+  public static calculateKAMA(closes: number[], period: number = 10, fastPeriod: number = 2, slowPeriod: number = 30): {
+    kama: number[];
+    currentKama: number;
+    slope: number;
+    er: number;
+  } {
+    const n = closes.length;
+    if (n < period + 2) {
+      const p = closes[n - 1] || 0;
+      return { kama: [p], currentKama: p, slope: 0, er: 0.5 };
+    }
+
+    const kamaArr: number[] = new Array(n);
+    let sum = 0;
+    for (let i = 0; i < period; i++) sum += closes[i];
+    kamaArr[period - 1] = sum / period;
+
+    const fastSC = 2 / (fastPeriod + 1);
+    const slowSC = 2 / (slowPeriod + 1);
+
+    let latestER = 0.5;
+    for (let i = period; i < n; i++) {
+      const change = Math.abs(closes[i] - closes[i - period]);
+      let volatility = 0;
+      for (let j = 0; j < period; j++) {
+        volatility += Math.abs(closes[i - j] - closes[i - j - 1]);
+      }
+      const er = volatility > 0 ? Math.min(1.0, Math.max(0.0, change / volatility)) : 0;
+      latestER = er;
+      const sc = Math.pow(er * (fastSC - slowSC) + slowSC, 2);
+      const prevKama = kamaArr[i - 1] ?? closes[i - 1];
+      kamaArr[i] = prevKama + sc * (closes[i] - prevKama);
+    }
+
+    const currentKama = kamaArr[n - 1] || closes[n - 1];
+    const prevKama2 = kamaArr[n - 3] || currentKama;
+    const slope = prevKama2 > 0 ? ((currentKama - prevKama2) / prevKama2) * 100 : 0;
+
+    return { kama: kamaArr, currentKama, slope, er: latestER };
+  }
+
+  /**
+   * 12. Schaff Trend Cycle (STC)
+   * Runs double-smoothed MACD through double Stochastic oscillator (0 to 100).
+   * Renowned for rapid early trend cycle detection in crypto.
+   */
+  public static calculateSTC(closes: number[], fastLength: number = 23, slowLength: number = 50, cycleLength: number = 10, dFactor: number = 0.5): {
+    stc: number;
+    prevStc: number;
+    isCycleBullish: boolean;
+    isCycleBearish: boolean;
+  } {
+    const n = closes.length;
+    if (n < slowLength + cycleLength) {
+      return { stc: 50, prevStc: 50, isCycleBullish: false, isCycleBearish: false };
+    }
+
+    // 1. MACD line = EMA(fast) - EMA(slow)
+    const macd: number[] = new Array(n);
+    const kFast = 2 / (fastLength + 1);
+    const kSlow = 2 / (slowLength + 1);
+    let fVal = closes[0];
+    let sVal = closes[0];
+    for (let i = 0; i < n; i++) {
+      fVal = closes[i] * kFast + fVal * (1 - kFast);
+      sVal = closes[i] * kSlow + sVal * (1 - kSlow);
+      macd[i] = fVal - sVal;
+    }
+
+    // 2. First Stochastic of MACD over cycleLength
+    const pf: number[] = new Array(n).fill(50);
+    for (let i = cycleLength; i < n; i++) {
+      let minM = Infinity;
+      let maxM = -Infinity;
+      for (let j = 0; j < cycleLength; j++) {
+        const m = macd[i - j];
+        if (m < minM) minM = m;
+        if (m > maxM) maxM = m;
+      }
+      const range = maxM - minM;
+      const k1 = range > 1e-8 ? ((macd[i] - minM) / range) * 100 : 50;
+      pf[i] = (pf[i - 1] ?? 50) + dFactor * (k1 - (pf[i - 1] ?? 50));
+    }
+
+    // 3. Second Stochastic of PF over cycleLength
+    const stcArr: number[] = new Array(n).fill(50);
+    for (let i = cycleLength * 2; i < n; i++) {
+      let minP = Infinity;
+      let maxP = -Infinity;
+      for (let j = 0; j < cycleLength; j++) {
+        const p = pf[i - j];
+        if (p < minP) minP = p;
+        if (p > maxP) maxP = p;
+      }
+      const rangeP = maxP - minP;
+      const k2 = rangeP > 1e-8 ? ((pf[i] - minP) / rangeP) * 100 : 50;
+      stcArr[i] = (stcArr[i - 1] ?? 50) + dFactor * (k2 - (stcArr[i - 1] ?? 50));
+    }
+
+    const currentStc = Math.max(0, Math.min(100, stcArr[n - 1] || 50));
+    const prevStc = Math.max(0, Math.min(100, stcArr[n - 2] || 50));
+    const isCycleBullish = (currentStc > prevStc && (prevStc <= 25 || currentStc >= 75)) || (currentStc >= 60);
+    const isCycleBearish = (currentStc < prevStc && (prevStc >= 75 || currentStc <= 25)) || (currentStc <= 40);
+
+    return { stc: currentStc, prevStc, isCycleBullish, isCycleBearish };
+  }
+
+  /**
+   * 13. Chande Momentum Oscillator (CMO)
+   * Unsmoothed relative momentum oscillator (-100 to +100).
+   * Directly quantifies upward vs downward price velocity.
+   */
+  public static calculateCMO(closes: number[], period: number = 9): number {
+    const n = closes.length;
+    if (n < period + 1) return 0;
+
+    let sumUp = 0;
+    let sumDown = 0;
+    for (let i = n - period; i < n; i++) {
+      const diff = closes[i] - closes[i - 1];
+      if (diff > 0) sumUp += diff;
+      else sumDown += Math.abs(diff);
+    }
+
+    const total = sumUp + sumDown;
+    if (total === 0) return 0;
+    return parseFloat((((sumUp - sumDown) / total) * 100).toFixed(2));
+  }
+
+  /**
+   * 14. Session / Rolling VWAP + Standard Deviation Volatility Bands
+   * Institutional reference price based on continuous volume-weighted typical price.
+   */
+  public static calculateVWAPBands(candles: KlinePoint[], lookback: number = 40): {
+    vwap: number;
+    upperBand: number;
+    lowerBand: number;
+    deviationPct: number;
+    isPriceAboveVwap: boolean;
+    isPriceAboveUpperBand: boolean;
+    isPriceBelowLowerBand: boolean;
+  } {
+    const n = candles.length;
+    const currentPrice = candles[n - 1]?.close || 0;
+    if (n < 5) {
+      return {
+        vwap: currentPrice,
+        upperBand: currentPrice * 1.01,
+        lowerBand: currentPrice * 0.99,
+        deviationPct: 0,
+        isPriceAboveVwap: true,
+        isPriceAboveUpperBand: false,
+        isPriceBelowLowerBand: false,
+      };
+    }
+
+    const slice = candles.slice(-Math.min(n, lookback));
+    let cumVol = 0;
+    let cumVolTypical = 0;
+    for (const c of slice) {
+      const typical = (c.high + c.low + c.close) / 3;
+      const v = c.volume > 0 ? c.volume : 1;
+      cumVol += v;
+      cumVolTypical += typical * v;
+    }
+
+    const vwap = cumVol > 0 ? cumVolTypical / cumVol : currentPrice;
+
+    // Calculate Volume-Weighted Variance
+    let sumSquaredDiff = 0;
+    for (const c of slice) {
+      const typical = (c.high + c.low + c.close) / 3;
+      const v = c.volume > 0 ? c.volume : 1;
+      sumSquaredDiff += v * Math.pow(typical - vwap, 2);
+    }
+    const variance = cumVol > 0 ? sumSquaredDiff / cumVol : 0;
+    const stdDev = Math.sqrt(variance);
+
+    const upperBand = vwap + 1.5 * stdDev;
+    const lowerBand = vwap - 1.5 * stdDev;
+    const deviationPct = vwap > 0 ? ((currentPrice - vwap) / vwap) * 100 : 0;
+
+    return {
+      vwap,
+      upperBand,
+      lowerBand,
+      deviationPct,
+      isPriceAboveVwap: currentPrice >= vwap,
+      isPriceAboveUpperBand: currentPrice >= upperBand,
+      isPriceBelowLowerBand: currentPrice <= lowerBand,
+    };
+  }
+
+  /**
+   * 15. Vortex Indicator (VI+ / VI-)
+   * Tracks positive and negative vortex flows based on high-to-low intra-bar distances.
+   */
+  public static calculateVortex(candles: KlinePoint[], period: number = 14): {
+    viPlus: number;
+    viMinus: number;
+    isBullish: boolean;
+    isBearish: boolean;
+  } {
+    const n = candles.length;
+    if (n < period + 2) {
+      return { viPlus: 1.0, viMinus: 1.0, isBullish: false, isBearish: false };
+    }
+
+    let vmPlus = 0;
+    let vmMinus = 0;
+    let trSum = 0;
+
+    for (let i = n - period; i < n; i++) {
+      const curr = candles[i];
+      const prev = candles[i - 1];
+      vmPlus += Math.abs(curr.high - prev.low);
+      vmMinus += Math.abs(curr.low - prev.high);
+
+      const tr = Math.max(
+        curr.high - curr.low,
+        Math.abs(curr.high - prev.close),
+        Math.abs(curr.low - prev.close)
+      );
+      trSum += tr;
+    }
+
+    const viPlus = trSum > 0 ? parseFloat((vmPlus / trSum).toFixed(4)) : 1.0;
+    const viMinus = trSum > 0 ? parseFloat((vmMinus / trSum).toFixed(4)) : 1.0;
+
+    return {
+      viPlus,
+      viMinus,
+      isBullish: viPlus > viMinus && viPlus >= 0.95,
+      isBearish: viMinus > viPlus && viMinus >= 0.95,
+    };
+  }
+
+  /**
+   * 10. Structural Support & Resistance Confluence Engine
+   * Detects key swing pivots and zone boundaries (pivot +/- 0.35 ATR).
+   * Supports both Hold (Bounce/Reject) AND Break (Breakout/Breakdown per PDF Priority 4).
+   */
+  public static calculateSupportResistance(candles: KlinePoint[]): {
+    nearestSupport: number;
+    nearestResistance: number;
+    isAtSupport: boolean;
+    isAtResistance: boolean;
+    supportBounceConfirmed: boolean;
+    supportBreakConfirmed: boolean;
+    resistanceRejectConfirmed: boolean;
+    resistanceBreakConfirmed: boolean;
+    macroTrend: 'BULLISH' | 'BEARISH' | 'SIDEWAYS';
+    ema50: number;
+    ema200: number;
+    atr: number;
+  } {
+    const closes = candles.map(c => c.close);
+    const n = closes.length;
+    const currentPrice = closes[n - 1] || 0;
+    const atr = CryptoDedicatedStrategyEngine.calculateATR(candles, 14);
+
+    if (n < 20) {
+      return {
+        nearestSupport: currentPrice * 0.98,
+        nearestResistance: currentPrice * 1.02,
+        isAtSupport: false,
+        isAtResistance: false,
+        supportBounceConfirmed: false,
+        supportBreakConfirmed: false,
+        resistanceRejectConfirmed: false,
+        resistanceBreakConfirmed: false,
+        macroTrend: 'SIDEWAYS',
+        ema50: currentPrice,
+        ema200: currentPrice,
+        atr,
+      };
+    }
+
+    const ema50 = CryptoDedicatedStrategyEngine.calculateEMA(closes, 50);
+    const ema200 = CryptoDedicatedStrategyEngine.calculateEMA(closes, Math.min(200, n));
+    const lastEma50 = ema50[ema50.length - 1] || currentPrice;
+    const lastEma200 = ema200[ema200.length - 1] || currentPrice;
+
+    // Zero-Lag Market Structure Trend: Driven by Zero-Lag SuperSmoother DSP Velocity (Zero EMA Lag)
+    let macroTrend: 'BULLISH' | 'BEARISH' | 'SIDEWAYS' = 'SIDEWAYS';
+    const smoothArr = this.calculateSuperSmoother(closes, 10);
+    const lastSmooth = smoothArr[smoothArr.length - 1] || currentPrice;
+    const prevSmooth = smoothArr[smoothArr.length - 2] || lastSmooth;
+    const smoothSlopePct = ((lastSmooth - prevSmooth) / (prevSmooth || 1)) * 100;
+
+    if (currentPrice > lastSmooth && smoothSlopePct >= 0.012) {
+      macroTrend = 'BULLISH';
+    } else if (currentPrice < lastSmooth && smoothSlopePct <= -0.012) {
+      macroTrend = 'BEARISH';
+    } else if (currentPrice > lastEma50 + (atr * 0.25)) {
+      macroTrend = 'BULLISH';
+    } else if (currentPrice < lastEma50 - (atr * 0.25)) {
+      macroTrend = 'BEARISH';
+    } else {
+      macroTrend = 'SIDEWAYS';
+    }
+
+    const window = candles.slice(Math.max(0, n - 40));
+    const pivotLows: number[] = [];
+    const pivotHighs: number[] = [];
+
+    for (let i = 2; i < window.length - 2; i++) {
+      const c = window[i];
+      if (
+        c.low <= window[i - 1].low &&
+        c.low <= window[i - 2].low &&
+        c.low <= window[i + 1].low &&
+        c.low <= window[i + 2].low
+      ) {
+        pivotLows.push(c.low);
+      }
+      if (
+        c.high >= window[i - 1].high &&
+        c.high >= window[i - 2].high &&
+        c.high >= window[i + 1].high &&
+        c.high >= window[i + 2].high
+      ) {
+        pivotHighs.push(c.high);
+      }
+    }
+    // Genuine price swing pivots are strictly preserved; EMA50 is not double-counted as a price pivot!
+
+    // Zone is defined as pivot +/- 0.35 ATR
+    const zoneBuffer = atr * 0.35;
+    const validSupports = pivotLows.filter(lvl => lvl <= currentPrice);
+    const nearestSupport = validSupports.length > 0 ? Math.max(...validSupports) : currentPrice * 0.985;
+
+    const validResistances = pivotHighs.filter(lvl => lvl >= currentPrice);
+    const nearestResistance = validResistances.length > 0 ? Math.min(...validResistances) : currentPrice * 1.015;
+
+    const distToSupport = Math.abs(currentPrice - nearestSupport);
+    const distToResistance = Math.abs(nearestResistance - currentPrice);
+
+    // Mutual Exclusivity: Price cannot be simultaneously at support and resistance unless in noise chop
+    const isAtSupport = distToSupport <= zoneBuffer * 1.2 && distToSupport < distToResistance;
+    const isAtResistance = distToResistance <= zoneBuffer * 1.2 && distToResistance < distToSupport;
+
+    const lastBar = candles[n - 1];
+    const prevBar = candles[n - 2];
+    const rangeLast = Math.max(lastBar.high - lastBar.low, 0.0001);
+    const lowerWickLast = Math.min(lastBar.open, lastBar.close) - lastBar.low;
+    const upperWickLast = lastBar.high - Math.max(lastBar.open, lastBar.close);
+
+    const isBullishCandle = lastBar.close > lastBar.open;
+    const isBearishCandle = lastBar.close < lastBar.open;
+    const isHammerWick = (lowerWickLast / rangeLast) >= 0.35 && (upperWickLast / rangeLast) <= 0.25;
+    const isShootingStarWick = (upperWickLast / rangeLast) >= 0.25 && (lowerWickLast / rangeLast) <= 0.25;
+
+    // 1. Support Hold (Bounce) — strictly requires being at support (not resistance), bullish candle or strong absorption hammer
+    let supportBounceConfirmed = isAtSupport && !isAtResistance && (
+      (isBullishCandle && rangeLast >= atr * 0.25) ||
+      (isHammerWick && !isBearishCandle) ||
+      (lowerWickLast >= rangeLast * 0.35 && lastBar.close >= prevBar.close)
+    );
+
+    // 2. Support Break (Breakdown - close below zone with volume/bearish candle)
+    const supportBreakConfirmed = (lastBar.close < (nearestSupport - zoneBuffer * 0.2) || (lastBar.close < nearestSupport && isBearishCandle)) &&
+                                  prevBar.close >= (nearestSupport - zoneBuffer * 1.5) &&
+                                  (rangeLast >= atr * 0.6 || lastBar.volume >= prevBar.volume * 0.85);
+
+    // 3. Resistance Hold (Rejection) — strictly requires being at resistance (not support), bearish candle or strong shooting star
+    let resistanceRejectConfirmed = isAtResistance && !isAtSupport && (
+      (isBearishCandle && rangeLast >= atr * 0.25) ||
+      (isShootingStarWick && !isBullishCandle) ||
+      (upperWickLast >= rangeLast * 0.35 && lastBar.close <= prevBar.close)
+    );
+
+    // 4. Resistance Break (Breakout - close above zone with volume/bullish candle)
+    const resistanceBreakConfirmed = (lastBar.close > (nearestResistance + zoneBuffer * 0.2) || (lastBar.close > nearestResistance && isBullishCandle)) &&
+                                     prevBar.close <= (nearestResistance + zoneBuffer * 1.5) &&
+                                     (rangeLast >= atr * 0.6 || lastBar.volume >= prevBar.volume * 0.85);
+
+    // Ambiguity Veto: If both fire due to extreme volatility wick, neither is a confirmed clean hold
+    if (supportBounceConfirmed && resistanceRejectConfirmed) {
+      supportBounceConfirmed = false;
+      resistanceRejectConfirmed = false;
+    }
+
+    return {
+      nearestSupport: parseFloat(nearestSupport.toFixed(4)),
+      nearestResistance: parseFloat(nearestResistance.toFixed(4)),
+      isAtSupport,
+      isAtResistance,
+      supportBounceConfirmed,
+      supportBreakConfirmed,
+      resistanceRejectConfirmed,
+      resistanceBreakConfirmed,
+      macroTrend,
+      ema50: lastEma50,
+      ema200: lastEma200,
+      atr,
+    };
+  }
+
+  /**
+   * =========================================================================
+   * MASTER QUANT EVALUATOR (PLAYBOOK 2026 ARCHITECTURE v2)
+   * =========================================================================
+   * Pipeline:
+   * 1. Regime Detection Gate (Trend vs Range vs Chaos/High-Vol Danger)
+   * 2. Signal Groups: One vote per group, max 100 total score.
+   *    - Group A: Trend (max 20)
+   *    - Group B: Mean-Reversion (max 20)
+   *    - Group C: Volatility / Squeeze (max 10)
+   *    - Group D: Structure (S/R Hold & Confirmed Break) (max 20)
+   *    - Group E: Order Flow (CVD / OBI) (max 20)
+   *    - Group F: Derivatives (Funding / OI Matrix) (max 10)
+   * 3. Clean score scale (Threshold >= 70)
+   * =========================================================================
+   */
+  public static evaluateMarketMath(
+    symbol: string,
+    candles: KlinePoint[],
+    microstructureData?: MicrostructureDerivativesData | null,
+    dedicatedSignal?: { side: 'BUY' | 'SELL' | null; strategyName?: string; waveValue?: number } | null
+  ): QuantMathVerdict {
+    const closes = candles.map(c => c.close);
+    const currentPrice = closes[closes.length - 1] || 0;
+
+    const defaultVerdict: QuantMathVerdict = {
+      symbol,
+      quantScore: 50,
+      recommendedSide: null,
+      marketRegime: 'RANDOM_WALK_CHOP',
+      hurstExponent: 0.50,
+      varianceRatio: 1.0,
+      efficiencyRatio: 0.5,
+      choppinessIndex: 50,
+      adx: 20,
+      volatilityPercentile: 50,
+      fisherTransform: 0,
+      fisherSignal: 0,
+      superSmootherPrice: currentPrice,
+      superSmootherSlope: 0,
+      kalmanEstimate: currentPrice,
+      kalmanDeviationPct: 0,
+      zScore: 0,
+      reasons: ['Insufficient historical bars (<30)'],
+    };
+
+    if (candles.length < 30) return defaultVerdict;
+
+    const lastBar = candles[candles.length - 1];
+    const prevBar = candles[candles.length - 2] || lastBar;
+    const rangeLast = Math.max(lastBar.high - lastBar.low, 0.00001);
+    const upperWickLast = lastBar.high - Math.max(lastBar.open, lastBar.close);
+    const lowerWickLast = Math.min(lastBar.open, lastBar.close) - lastBar.low;
+
+    // -------------------------------------------------------------------------
+    // STEP 1: CALCULATE REGIME GATES (Section 2 of Playbook)
+    // -------------------------------------------------------------------------
+    const chopIndex = CryptoDedicatedStrategyEngine.calculateChoppinessIndex(candles, 14);
+    const adx = CryptoDedicatedStrategyEngine.calculateADX(candles, 14);
+    const ker = this.calculateEfficiencyRatio(closes, 14);
+    const vr = this.calculateVarianceRatio(closes, 4);
+    const hurst = this.calculateHurstExponent(closes, 32);
+    const volPercentile = this.calculateVolatilityPercentile(candles, 100);
+    const atr = CryptoDedicatedStrategyEngine.calculateATR(candles, 14);
+
+    let marketRegime: 'TREND' | 'RANGE' | 'CHAOS_NO_TRADE' | 'VOL_EXTREME_DANGER' = 'RANGE';
+    let regimeReason = '';
+
+    // Gate 1: Dead Random Walk Chaos (Very high chop + compressed dead volume)
+    if (chopIndex > 65.0 && volPercentile < 15.0) {
+      marketRegime = 'CHAOS_NO_TRADE';
+      regimeReason = `Dead Random Walk Chop (CI: ${chopIndex.toFixed(1)}, Vol: ${volPercentile}%ile)`;
+    }
+    // Gate 2: Active Directional Trend / High Volatility Momentum Expansion
+    else if ((adx >= 20.0 && (chopIndex < 55.0 || ker >= 0.25)) || chopIndex < 42.0 || volPercentile > 90.0) {
+      marketRegime = 'TREND';
+      regimeReason = `Active Directional Momentum (ADX: ${adx.toFixed(1)}, CI: ${chopIndex.toFixed(1)}, Vol: ${volPercentile}%ile)`;
+    }
+    // Gate 3: Mean-Reverting Range (Oscillation between support & resistance)
+    else {
+      marketRegime = 'RANGE';
+      regimeReason = `Oscillating Range (CI: ${chopIndex.toFixed(1)}, ADX: ${adx.toFixed(1)}, VR: ${vr})`;
+    }
+
+    // Only Dead Chaos blocks trade entries
+    if (marketRegime === 'CHAOS_NO_TRADE') {
+      return {
+        ...defaultVerdict,
+        marketRegime,
+        regimeReason,
+        hurstExponent: hurst,
+        varianceRatio: vr,
+        efficiencyRatio: ker,
+        choppinessIndex: chopIndex,
+        adx,
+        volatilityPercentile: volPercentile,
+        quantScore: 0,
+        recommendedSide: null,
+        reasons: [`REGIME GATE ACTIVE: ${regimeReason} — TRADING STRICTLY BLOCKED`],
+      };
+    }
+
+    // -------------------------------------------------------------------------
+    // STEP 2: CALCULATE UNDERLYING INDICATORS
+    // -------------------------------------------------------------------------
+    // SuperSmoother
+    const smooth = this.calculateSuperSmoother(closes, 10);
+    const sLen = smooth.length;
+    const currentSmooth = sLen > 0 ? smooth[sLen - 1] : (closes[closes.length - 1] || 0);
+    const prevSmooth = sLen > 1 ? smooth[sLen - 2] : currentSmooth;
+    const superSmootherSlope = (prevSmooth && !isNaN(prevSmooth) && prevSmooth !== 0)
+      ? ((currentSmooth - prevSmooth) / prevSmooth) * 100
+      : 0;
+
+    // Fisher Transform (cross verified from extreme levels)
+    const { fisher, signal: fishSig } = this.calculateFisherTransform(candles, 10);
+    const fLen = fisher.length;
+    const currentFisher = fLen > 0 ? fisher[fLen - 1] : 0;
+    const currentFishSig = fLen > 0 ? fishSig[fLen - 1] : 0;
+    const prevFisher = fLen > 1 ? fisher[fLen - 2] : 0;
+    const prevFishSig = fLen > 1 ? fishSig[fLen - 2] : 0;
+    const isFisherBullishCross = prevFisher <= prevFishSig && currentFisher > currentFishSig && (prevFisher <= -0.70 || currentFisher <= -0.40);
+    const isFisherBearishCross = prevFisher >= prevFishSig && currentFisher < currentFishSig && (prevFisher >= 0.70 || currentFisher >= 0.40);
+
+    // Adaptive Kalman Filter
+    const kalmanArr = this.calculateKalmanFilter(closes);
+    const kalmanEstimate = kalmanArr[kalmanArr.length - 1] || currentPrice;
+    const kalmanDeviationPct = ((currentPrice - kalmanEstimate) / (kalmanEstimate || 1)) * 100;
+    const kalmanNormalizedDev = (currentPrice - kalmanEstimate) / (atr || 1);
+
+    // Z-Score
+    const zScore = this.calculateZScore(closes, 20);
+
+    // RSI & RSI Reclaim (PDF Section 3 & 4)
+    const rsiArr = CryptoDedicatedStrategyEngine.calculateRSI(closes, 14);
+    const currentRsi = rsiArr[rsiArr.length - 1] || 50;
+    const prevRsi1 = rsiArr[rsiArr.length - 2] || 50;
+    const prevRsi2 = rsiArr[rsiArr.length - 3] || 50;
+    const isRsiBullishReclaim = (prevRsi1 < 35 || prevRsi2 < 35) && currentRsi >= 35;
+    const isRsiBearishReclaim = (prevRsi1 > 65 || prevRsi2 > 65) && currentRsi <= 65;
+
+    // S/R Structure
+    const sr = this.calculateSupportResistance(candles);
+
+    // TTM Squeeze
+    const squeeze = this.isTTMSqueeze(candles);
+
+    // Nexvora Quantum Future Momentum Predictor [Original v1] (d²P/dt² Zero-Lag Acceleration)
+    const nexPredict = CryptoDedicatedStrategyEngine.evaluateNexvoraQuantumFuturePredictor(candles);
+
+    // -------------------------------------------------------------------------
+    // STEP 3: VOTE BY SIGNAL GROUP (1 Vote Per Group, Max 100 Points)
+    // -------------------------------------------------------------------------
+    let buyA = 0, sellA = 0;   // Group A: Trend (Max 20)
+    let buyB = 0, sellB = 0;   // Group B: Mean-Reversion / Predictive Turns (Max 20)
+    let buyC = 0, sellC = 0;   // Group C: Volatility (Max 10)
+    let buyD = 0, sellD = 0;   // Group D: Structure (Max 20)
+    let buyE = 0, sellE = 0;   // Group E: Order Flow (Max 20)
+    let buyF = 0, sellF = 0;   // Group F: Derivatives (Max 10)
+
+    const reasons: string[] = [];
+
+    const isMacroBearish = sr.macroTrend === 'BEARISH';
+    const isMacroBullish = sr.macroTrend === 'BULLISH';
+
+    // -------------------------------------------------------------------------
+    // SYSTEM 3 NOVEL QUANT SUITE: KAMA, STC, CMO, VWAP BANDS & VORTEX
+    // -------------------------------------------------------------------------
+    const kama = QuantMathematicalEngine.calculateKAMA(closes, 10, 2, 30);
+    const stc = QuantMathematicalEngine.calculateSTC(closes, 23, 50, 10, 0.5);
+    const cmo = QuantMathematicalEngine.calculateCMO(closes, 9);
+    const vwapBands = QuantMathematicalEngine.calculateVWAPBands(candles, 40);
+    const vortex = QuantMathematicalEngine.calculateVortex(candles, 14);
+
+    // -------------------------------------------------------------------------
+    // GROUP A: ADAPTIVE TREND & VORTEX FLOW (Max 20 pts)
+    // -------------------------------------------------------------------------
+    // 1. Kaufman's Adaptive Moving Average (KAMA) Trend Direction & Slope
+    if (currentPrice >= kama.currentKama && kama.slope >= -0.005) {
+      buyA += 10;
+      reasons.push(`Kaufman Adaptive Moving Average (KAMA) Uptrend (+${kama.slope.toFixed(2)}%, ER: ${kama.er.toFixed(2)}) (+10 A)`);
+    } else if (currentPrice <= kama.currentKama && kama.slope <= 0.005) {
+      sellA += 10;
+      reasons.push(`Kaufman Adaptive Moving Average (KAMA) Downtrend (${kama.slope.toFixed(2)}%, ER: ${kama.er.toFixed(2)}) (+10 A)`);
+    }
+
+    // 2. Vortex Indicator Flow (VI+ vs VI-)
+    if (vortex.isBullish) {
+      buyA += 10;
+      reasons.push(`Vortex Flow Bullish Expansion (VI+: ${vortex.viPlus} > VI-: ${vortex.viMinus}) (+10 A)`);
+    } else if (vortex.isBearish) {
+      sellA += 10;
+      reasons.push(`Vortex Flow Bearish Expansion (VI-: ${vortex.viMinus} > VI+: ${vortex.viPlus}) (+10 A)`);
+    }
+
+    if (dedicatedSignal?.side === 'BUY') {
+      sellA = 0;
+      buyA = Math.max(buyA, 15);
+      reasons.push(`Dedicated Sniper Bullish Momentum Alignment [${dedicatedSignal.strategyName || 'PRO'}] (+15 A BUY)`);
+    } else if (dedicatedSignal?.side === 'SELL') {
+      buyA = 0;
+      sellA = Math.max(sellA, 15);
+      reasons.push(`Dedicated Sniper Bearish Momentum Alignment [${dedicatedSignal.strategyName || 'PRO'}] (+15 A SELL)`);
+    }
+    buyA = Math.min(20, buyA);
+    sellA = Math.min(20, sellA);
+
+    // -------------------------------------------------------------------------
+    // GROUP B: SCHAFF TREND CYCLE (STC) & CHANDE MOMENTUM (CMO) (Max 20 pts)
+    // -------------------------------------------------------------------------
+    // 1. Schaff Trend Cycle (0 - 100)
+    if (stc.isCycleBullish) {
+      buyB += 10;
+      reasons.push(`Schaff Trend Cycle (STC: ${stc.stc.toFixed(1)}) Bullish Cycle (+10 B)`);
+    } else if (stc.isCycleBearish) {
+      sellB += 10;
+      reasons.push(`Schaff Trend Cycle (STC: ${stc.stc.toFixed(1)}) Bearish Cycle (+10 B)`);
+    }
+
+    // 2. Chande Momentum Oscillator (CMO: -100 to +100)
+    if (cmo >= 12) {
+      buyB += 10;
+      reasons.push(`Chande Momentum Oscillator Bullish Surge (CMO: +${cmo.toFixed(1)}) (+10 B)`);
+    } else if (cmo <= -12) {
+      sellB += 10;
+      reasons.push(`Chande Momentum Oscillator Bearish Dump (CMO: ${cmo.toFixed(1)}) (+10 B)`);
+    } else if (cmo > 0) {
+      buyB += 5;
+    } else if (cmo < 0) {
+      sellB += 5;
+    }
+
+    if (dedicatedSignal?.side === 'BUY') {
+      sellB = 0;
+      buyB = Math.max(buyB, 10);
+      reasons.push('Dedicated Strategy Oversold Confluence (+10 B BUY)');
+    } else if (dedicatedSignal?.side === 'SELL') {
+      buyB = 0;
+      sellB = Math.max(sellB, 10);
+      reasons.push('Dedicated Strategy Overbought Confluence (+10 B SELL)');
+    }
+    buyB = Math.min(20, buyB);
+    sellB = Math.min(20, sellB);
+
+    // -------------------------------------------------------------------------
+    // GROUP C: VOLATILITY / SQUEEZE (Max 10 pts)
+    // -------------------------------------------------------------------------
+    if (squeeze.squeezeReleased) {
+      if (currentPrice > currentSmooth) {
+        buyC += 10;
+        reasons.push('TTM Squeeze Breakout Expansion (+10 C)');
+      } else {
+        sellC += 10;
+        reasons.push('TTM Squeeze Breakdown Expansion (+10 C)');
+      }
+    } else if (volPercentile >= 20.0 && volPercentile <= 85.0) {
+      // Healthy tradable volatility band
+      buyC += 5;
+      sellC += 5;
+    }
+    buyC = Math.min(10, buyC);
+    sellC = Math.min(10, sellC);
+
+    // -------------------------------------------------------------------------
+    // GROUP D: INSTITUTIONAL VWAP BANDS & S/R STRUCTURE (Max 20 pts)
+    // -------------------------------------------------------------------------
+    if (vwapBands.isPriceAboveUpperBand) {
+      buyD = 20;
+      reasons.push(`⚡ [VWAP BREAKOUT] Expansion above Institutional VWAP +1.5σ Band ($${vwapBands.upperBand.toFixed(4)}) (+20 D BUY)`);
+    } else if (vwapBands.isPriceBelowLowerBand) {
+      sellD = 20;
+      reasons.push(`⚡ [VWAP BREAKDOWN] Breakdown below Institutional VWAP -1.5σ Band ($${vwapBands.lowerBand.toFixed(4)}) (+20 D SELL)`);
+    } else if (sr.supportBreakConfirmed) {
+      // 1. Confirmed Breakdown below Support
+      sellD = 20;
+      reasons.push(`⚡ [BREAKDOWN CONFIRMED] Close below Support Zone $${sr.nearestSupport} with Volume (+20 D SELL)`);
+    } else if (sr.resistanceBreakConfirmed) {
+      // 2. Confirmed Breakout above Resistance
+      buyD = 20;
+      reasons.push(`⚡ [BREAKOUT CONFIRMED] Close above Resistance Zone $${sr.nearestResistance} with Volume (+20 D BUY)`);
+    } else if (sr.resistanceRejectConfirmed) {
+      // 3. Resistance Rejection / Bearish Reversal
+      sellD = 15;
+      reasons.push(`🛡️ [RESISTANCE REJECTION] Bearish Rejection at Resistance Zone $${sr.nearestResistance} (+15 D SELL)`);
+    } else if (sr.supportBounceConfirmed) {
+      // 4. Support Bounce / Bullish Absorption
+      buyD = 15;
+      reasons.push(`🛡️ [SUPPORT ABSORPTION BOUNCE] Bullish Bounce at Support Zone $${sr.nearestSupport} (+15 D BUY)`);
+    } else if (vwapBands.isPriceAboveVwap) {
+      buyD = 10;
+      reasons.push(`Holding Above Session VWAP Anchor $${vwapBands.vwap.toFixed(4)} (+10 D BUY)`);
+    } else {
+      sellD = 10;
+      reasons.push(`Trading Below Session VWAP Anchor $${vwapBands.vwap.toFixed(4)} (+10 D SELL)`);
+    }
+    if (dedicatedSignal?.side === 'BUY') {
+      if (!sr.supportBreakConfirmed) {
+        sellD = 0;
+        buyD = Math.max(buyD, 10);
+        reasons.push('Dedicated Strategy Support Bounce Hold (+10 D BUY)');
+      }
+    } else if (dedicatedSignal?.side === 'SELL') {
+      if (!sr.resistanceBreakConfirmed) {
+        buyD = 0;
+        sellD = Math.max(sellD, 10);
+        reasons.push('Dedicated Strategy Resistance Rejection Hold (+10 D SELL)');
+      }
+    }
+    buyD = Math.min(20, buyD);
+    sellD = Math.min(20, sellD);
+
+    // -------------------------------------------------------------------------
+    // GROUP E: ORDER FLOW & MICROSTRUCTURE (Max 20 pts)
+    // -------------------------------------------------------------------------
+    if (microstructureData) {
+      // Live Delta Exchange Order Book & Recent Trades
+      // 1. Order Book Imbalance (OBI)
+      if (microstructureData.obi > 0.20) {
+        buyE += 10;
+        reasons.push(`Order Book Imbalance Bullish (OBI: +${microstructureData.obi.toFixed(2)}) (+10 E)`);
+      } else if (microstructureData.obi < -0.20) {
+        sellE += 10;
+        reasons.push(`Order Book Imbalance Bearish (OBI: ${microstructureData.obi.toFixed(2)}) (+10 E)`);
+      }
+
+      // 2. Cumulative Volume Delta & Taker Buy Ratio
+      if (microstructureData.takerBuyRatio > 0.55 || microstructureData.cvd > 0) {
+        buyE += 10;
+        reasons.push(`Aggressive Taker Buy Dominance (${(microstructureData.takerBuyRatio * 100).toFixed(0)}%) (+10 E)`);
+      } else if (microstructureData.takerBuyRatio < 0.45 || microstructureData.cvd < 0) {
+        sellE += 10;
+        reasons.push(`Aggressive Taker Sell Dominance (${((1 - microstructureData.takerBuyRatio) * 100).toFixed(0)}%) (+10 E)`);
+      }
+    } else {
+      // High-accuracy Candle Volume & Wick Microstructure Proxy for backtest/offline
+      const lastBar = candles[candles.length - 1];
+      const prevBar = candles[candles.length - 2];
+      const candleRange = Math.max(lastBar.high - lastBar.low, 0.0001);
+      const lowerWick = Math.min(lastBar.open, lastBar.close) - lastBar.low;
+      const upperWick = lastBar.high - Math.max(lastBar.open, lastBar.close);
+      const lowerWickRatio = lowerWick / candleRange;
+      const upperWickRatio = upperWick / candleRange;
+
+      if (lowerWickRatio >= 0.30 && lastBar.volume >= prevBar.volume * 0.9) {
+        buyE += 15;
+        reasons.push(`Absorption Volume Delta at Lows (+15 E)`);
+      } else if (upperWickRatio >= 0.30 && lastBar.volume >= prevBar.volume * 0.9) {
+        sellE += 15;
+        reasons.push(`Exhaustion Volume Delta at Highs (+15 E)`);
+      } else if (lastBar.close > lastBar.open && lastBar.volume > prevBar.volume) {
+        buyE += 10;
+      } else if (lastBar.close < lastBar.open && lastBar.volume > prevBar.volume) {
+        sellE += 10;
+      }
+    }
+    buyE = Math.min(20, buyE);
+    sellE = Math.min(20, sellE);
+
+    // -------------------------------------------------------------------------
+    // GROUP F: DERIVATIVES / POSITIONING (Max 10 pts)
+    // -------------------------------------------------------------------------
+    if (microstructureData) {
+      // 1. Funding Rate (Crowded position fade / squeeze)
+      if (microstructureData.fundingRate < -0.005) {
+        buyF += 5;
+        reasons.push(`Negative Funding Rate (${microstructureData.fundingRate}) Short Squeeze Setup (+5 F)`);
+      } else if (microstructureData.fundingRate > 0.02) {
+        sellF += 5;
+        reasons.push(`High Positive Funding Rate (${microstructureData.fundingRate}) Long Flush Risk (+5 F)`);
+      }
+
+      // 2. Open Interest + Price Matrix (Page 5 & 6)
+      const isPriceUp = currentPrice >= (candles[candles.length - 5]?.close || currentPrice);
+      const isOiUp = microstructureData.oiChangeUsd6h > 0;
+
+      if (isPriceUp && isOiUp) {
+        buyF += 5; // New longs, strong trend
+        reasons.push('OI Expanding with Price Up: New Longs Trend (+5 F)');
+      } else if (!isPriceUp && isOiUp) {
+        sellF += 5; // New shorts, strong trend
+        reasons.push('OI Expanding with Price Down: New Shorts Trend (+5 F)');
+      } else if (!isPriceUp && !isOiUp) {
+        buyF += 5; // Long liquidation exhaustion
+        reasons.push('OI Dropping with Price Down: Liquidation Exhaustion (+5 F)');
+      } else if (isPriceUp && !isOiUp) {
+        sellF += 5; // Short covering weak rally
+        reasons.push('OI Dropping with Price Up: Short Covering Exhaustion (+5 F)');
+      }
+    } else {
+      // Neutral default for offline/backtest
+      buyF += 5;
+      sellF += 5;
+    }
+    buyF = Math.min(10, buyF);
+    sellF = Math.min(10, sellF);
+
+    // -------------------------------------------------------------------------
+    // STEP 4: TOTAL CONFLUENCE SCORE & EXECUTION THRESHOLD (Clean 0-100 Scale)
+    // Execution threshold: >= 55 points (Allows capturing smaller opportunities and frequent trades)
+    // -------------------------------------------------------------------------
+    const EXECUTION_THRESHOLD = 55;
+    let totalBuyScore = buyA + buyB + buyC + buyD + buyE + buyF;
+    let totalSellScore = sellA + sellB + sellC + sellD + sellE + sellF;
+
+    // Universal Macro Trend Steering (Playbook 2026: Trade With The Trend!)
+    // 1. Counter-trend trades are strictly capped <= 40 across BOTH TREND and RANGE regimes.
+    //    Prevents buying falling knives in macro bear markets and shorting explosive bull runs.
+    if (isMacroBearish) {
+      totalBuyScore = Math.min(totalBuyScore, 40);
+      reasons.push('Macro Downtrend: Counter-trend BUY capped <= 40 to prevent buying falling knives');
+    } else if (isMacroBullish) {
+      totalSellScore = Math.min(totalSellScore, 40);
+      reasons.push('Macro Uptrend: Counter-trend SELL capped <= 40 to prevent shorting bull breakouts');
+    }
+
+    // 2. Range Regime Boundary Enforcement
+    //    In RANGE, only allow entries at the zone boundaries (Support floor for BUY, Resistance ceiling for SELL).
+    //    Middle-of-the-range noise trades are capped <= 45 to prevent whipsaw stopouts.
+    if (marketRegime === 'RANGE') {
+      const isAtSupportOrBounce = sr.supportBounceConfirmed || (sr.isAtSupport && !sr.supportBreakConfirmed);
+      const isAtResistanceOrReject = sr.resistanceRejectConfirmed || (sr.isAtResistance && !sr.resistanceBreakConfirmed);
+
+      if (!isAtSupportOrBounce) {
+        totalBuyScore = Math.min(totalBuyScore, 45);
+        reasons.push('Range Regime: BUY in open air / middle of range capped <= 45 (not at support boundary)');
+      } else {
+        reasons.push(`Range Floor Bounce Setup active at $${sr.nearestSupport}`);
+      }
+
+      if (!isAtResistanceOrReject) {
+        totalSellScore = Math.min(totalSellScore, 45);
+        reasons.push('Range Regime: SELL in open air / middle of range capped <= 45 (not at resistance boundary)');
+      } else {
+        reasons.push(`Range Ceiling Rejection Setup active at $${sr.nearestResistance}`);
+      }
+    }
+
+    totalBuyScore = Math.min(99, Math.max(0, totalBuyScore));
+    totalSellScore = Math.min(99, Math.max(0, totalSellScore));
+
+    let recommendedSide: 'BUY' | 'SELL' | null = null;
+    let finalScore = 50;
+
+    if (totalBuyScore >= EXECUTION_THRESHOLD && totalBuyScore > totalSellScore) {
+      recommendedSide = 'BUY';
+      finalScore = Math.min(99, Math.round(totalBuyScore));
+      reasons.push(`EXECUTION APPROVED: BUY Score = ${totalBuyScore}/100 >= ${EXECUTION_THRESHOLD}`);
+    } else if (totalSellScore >= EXECUTION_THRESHOLD && totalSellScore > totalBuyScore) {
+      recommendedSide = 'SELL';
+      finalScore = Math.min(99, Math.round(totalSellScore));
+      reasons.push(`EXECUTION APPROVED: SELL Score = ${totalSellScore}/100 >= ${EXECUTION_THRESHOLD}`);
+    } else {
+      recommendedSide = null;
+      finalScore = Math.max(totalBuyScore, totalSellScore);
+      reasons.push(`BELOW CONFLUENCE THRESHOLD: Buy=${totalBuyScore}, Sell=${totalSellScore} (Need >= ${EXECUTION_THRESHOLD})`);
+    }
+
+    return {
+      symbol,
+      quantScore: finalScore,
+      recommendedSide,
+      marketRegime,
+      regimeReason,
+      hurstExponent: hurst,
+      varianceRatio: vr,
+      efficiencyRatio: ker,
+      choppinessIndex: chopIndex,
+      adx,
+      volatilityPercentile: volPercentile,
+      fisherTransform: parseFloat(currentFisher.toFixed(2)),
+      fisherSignal: parseFloat(currentFishSig.toFixed(2)),
+      superSmootherPrice: parseFloat(currentSmooth.toFixed(4)),
+      superSmootherSlope: parseFloat(superSmootherSlope.toFixed(3)),
+      kalmanEstimate: parseFloat(kalmanEstimate.toFixed(4)),
+      kalmanDeviationPct: parseFloat(kalmanDeviationPct.toFixed(3)),
+      zScore,
+      kama,
+      stc,
+      cmo,
+      vwapBands,
+      vortex,
+      nearestSupport: sr.nearestSupport,
+      nearestResistance: sr.nearestResistance,
+      isAtSupport: sr.isAtSupport,
+      isAtResistance: sr.isAtResistance,
+      supportBounceConfirmed: sr.supportBounceConfirmed,
+      supportBreakConfirmed: sr.supportBreakConfirmed,
+      resistanceRejectConfirmed: sr.resistanceRejectConfirmed,
+      resistanceBreakConfirmed: sr.resistanceBreakConfirmed,
+      scores: {
+        groupA_trend: Math.max(buyA, sellA),
+        groupB_meanRevert: Math.max(buyB, sellB),
+        groupC_volatility: Math.max(buyC, sellC),
+        groupD_structure: Math.max(buyD, sellD),
+        groupE_orderFlow: Math.max(buyE, sellE),
+        groupF_derivatives: Math.max(buyF, sellF),
+        totalBuyScore,
+        totalSellScore,
+      },
+      microstructure: microstructureData ? {
+        obi: microstructureData.obi,
+        cvd: microstructureData.cvd,
+        takerBuyRatio: microstructureData.takerBuyRatio,
+        fundingRate: microstructureData.fundingRate,
+        openInterest: microstructureData.openInterest,
+      } : undefined,
+      reasons,
+    };
+  }
+}
+
+export const quantMath = QuantMathematicalEngine;

@@ -1,0 +1,62 @@
+exchange:
+  name: delta_india
+  base_url: https://api.india.delta.exchange
+  contract_type: perpetual_futures
+  market_data_timezone: UTC
+  reporting_timezone: Asia/Kolkata
+  usd_inr_rate: 88.0
+
+backtest:
+  initial_capital_inr: 100000 # 100,000 INR (~1,136 USD)
+  initial_capital_usd: 1136.36
+  start_date: "2024-06-01"
+  end_date: "2026-10-01"
+  entry_timeframe: "5m"
+  trend_timeframe: "15m"
+  starting_mode: "backtest"
+  allow_live_orders: false
+
+strategy:
+  ema_fast_15m: 50
+  ema_slow_15m: 200
+  ema_pullback_5m: 20
+  ema_filter_5m: 200
+  rsi_period: 14
+  atr_period: 14
+  rsi_long_cross: 50
+  rsi_short_cross: 50
+  stop_atr_multiple: 1.5
+  target_r_multiple: 2.0
+  max_hold_bars: 24
+
+risk:
+  risk_per_trade: 0.0025
+  max_aggregate_open_risk: 0.01
+  daily_loss_limit: 0.01
+  weekly_loss_limit: 0.025
+  max_drawdown_halt: 0.05
+  max_gross_notional_equity_multiple: 1.0
+  max_positions: 4
+  max_positions_per_correlation_group: 1
+
+universe:
+  min_history_days: 90
+  liquidity_lookback_days: 30
+  min_median_daily_quote_volume_usd: 1000000
+  max_spread_fraction: 0.001
+  refresh_frequency: daily
+
+execution:
+  fee_rate_per_side: 0.0005
+  slippage_rate_per_side: 0.0003
+  use_actual_product_fee_when_available: true
+  use_historical_funding: true
+  assume_stop_first_if_stop_and_target_hit: true
+  missing_funding_policy: "zero" # zero or fail_validation
+  insufficient_margin_policy: "reject_trade"
+
+validation:
+  train_months: 12
+  validation_months: 3
+  min_out_of_sample_trades: 100
+  paper_trading_days: 30

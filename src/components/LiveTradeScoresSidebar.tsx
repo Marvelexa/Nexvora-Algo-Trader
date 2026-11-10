@@ -29,7 +29,7 @@ interface LiveTradeScoresSidebarProps {
   onSelectCoin?: (symbol: string) => void;
 }
 
-export const LiveTradeScoresSidebar: React.FC<LiveTradeScoresSidebarProps> = ({ onSelectCoin }) => {
+export const LiveTradeScoresSidebar: React.FC<LiveTradeScoresSidebarProps> = React.memo(({ onSelectCoin }) => {
   const [diagnostics, setDiagnostics] = useState<AssetDiagnostics[]>([]);
   const [status, setStatus] = useState<DeltaAutoTraderState | null>(null);
   const [loading, setLoading] = useState(true);
@@ -69,7 +69,7 @@ export const LiveTradeScoresSidebar: React.FC<LiveTradeScoresSidebarProps> = ({ 
 
   useEffect(() => {
     fetchScores();
-    const interval = setInterval(fetchScores, 2000); // 2-second live refresh
+    const interval = setInterval(() => { if (typeof document === 'undefined' || !document.hidden) fetchScores(); }, 3000); // 2-second live refresh
     return () => clearInterval(interval);
   }, []);
 
@@ -507,4 +507,4 @@ export const LiveTradeScoresSidebar: React.FC<LiveTradeScoresSidebarProps> = ({ 
       </div>
     </div>
   );
-};
+});

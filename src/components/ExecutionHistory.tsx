@@ -18,7 +18,7 @@ interface ExecutionHistoryProps {
   onResetOrders?: () => void;
 }
 
-export const ExecutionHistory: React.FC<ExecutionHistoryProps> = ({
+export const ExecutionHistory: React.FC<ExecutionHistoryProps> = React.memo(({
   orders,
   currency,
   inrRate,
@@ -135,4 +135,4 @@ export const ExecutionHistory: React.FC<ExecutionHistoryProps> = ({
       </div>
     </div>
   );
-};
+});

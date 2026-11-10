@@ -11,7 +11,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "node ./node_modules/typescript/bin/tsc --noEmit",
-    "test": "node ./node_modules/tsx/dist/cli.mjs tests/test_smart_direct_verification.ts"
+    "test": "node ./node_modules/tsx/dist/cli.mjs tests/run_all_verification_suites.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

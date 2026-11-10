@@ -868,38 +868,32 @@ export class QuantMathematicalEngine {
         sellD = 0;
       }
     } else if (sr.supportBounceConfirmed) {
-      // 4. Support Bounce / Bullish Absorption
+      // 4. Support Bounce / Bullish Absorption (Professional S/R Rule: Bounces at support are bullish reversals)
       if (isMacroBullish && superSmootherSlope >= -0.015) {
         buyD = 20;
+        sellD = 0;
         reasons.push(`🛡️ [UPTREND PULLBACK] Pullback to Support $${sr.nearestSupport} with Bullish Absorption (+20 D BUY)`);
-      } else if (marketRegime === 'RANGE' && !isMacroBearish && superSmootherSlope >= -0.015) {
+      } else if (marketRegime === 'RANGE') {
         buyD = 20;
+        sellD = 0;
         reasons.push(`🛡️ [RANGE FLOOR BOUNCE] Bullish Bounce at Support Zone $${sr.nearestSupport} (+20 D BUY)`);
-      } else if (!isMacroBearish && (isLastBarGreen || lowerWickLast / rangeLast >= 0.25)) {
-        buyD = 15;
-        reasons.push(`🛡️ [SUPPORT ABSORPTION BOUNCE] Confirmed Bullish Absorption at $${sr.nearestSupport} (+15 D BUY)`);
+      } else if (isLastBarGreen || lowerWickLast / rangeLast >= 0.25) {
+        buyD = 20;
+        sellD = 0;
+        reasons.push(`🛡️ [SUPPORT ABSORPTION BOUNCE] Confirmed Bullish Absorption at $${sr.nearestSupport} (+20 D BUY)`);
       } else {
-        // In Macro Bearish Downtrend: support bounces are weak counter-trend tests
-        buyD = 5;
-        if (isLastBarRed || currentPrice <= sr.ema50) {
-          sellD = Math.max(sellD, 15);
-          reasons.push(`Pressure on Support in Macro Downtrend $${sr.nearestSupport} (+15 D SELL)`);
-        } else {
-          reasons.push(`Testing Support in Macro Downtrend $${sr.nearestSupport} (+5 D BUY)`);
-        }
+        buyD = 10;
+        sellD = 0;
+        reasons.push(`🛡️ [SUPPORT BOUNCE TEST] Testing Bullish Bounce at $${sr.nearestSupport} (+10 D BUY)`);
       }
     } else if (sr.isAtResistance && !sr.resistanceBreakConfirmed) {
       sellD = 10;
-      reasons.push(`Testing Resistance Zone $${sr.nearestResistance} (+10 D SELL)`);
+      buyD = 0;
+      reasons.push(`Testing Resistance Zone ${sr.nearestResistance} (+10 D SELL)`);
     } else if (sr.isAtSupport && !sr.supportBreakConfirmed) {
-      if (isMacroBearish || isLastBarRed) {
-        sellD = Math.max(sellD, 10);
-        buyD = 0;
-        reasons.push(`Testing Support Breakdown Pressure $${sr.nearestSupport} (+10 D SELL)`);
-      } else {
-        buyD = 10;
-        reasons.push(`Testing Support Zone $${sr.nearestSupport} (+10 D BUY)`);
-      }
+      buyD = 10;
+      sellD = 0;
+      reasons.push(`🛡️ [TESTING SUPPORT] Holding at Support Zone $${sr.nearestSupport} (+10 D BUY)`);
     } else {
       // Open air structure: reward direction with clean clearance to opposing zone
       if (currentPrice > sr.nearestSupport && (sr.nearestResistance - currentPrice) > atr * 1.0 && (isLastBarGreen || isMacroBullish)) {
@@ -1022,17 +1016,20 @@ export class QuantMathematicalEngine {
     // 1. In TREND regime: Enforce strict directional trend-following (block counter-trend catching falling knives or shorting breakouts).
     // 2. In RANGE regime: Allow mean-reversion in BOTH directions (support floor bounce BUY and resistance ceiling reject SELL).
     if (marketRegime === 'TREND') {
+      const isExemptBuyReversal = dedicatedSignal?.side === 'BUY' || sr.supportBounceConfirmed || (sr.isAtSupport && isLastBarGreen);
+      const isExemptSellReversal = dedicatedSignal?.side === 'SELL' || sr.resistanceRejectConfirmed || (sr.isAtResistance && isLastBarRed);
+
       if (isMacroBearish || currentPrice < sr.ema50) {
-        totalBuyScore = Math.min(totalBuyScore, 25);
-        if (currentPrice < sr.ema50) {
-          totalSellScore = Math.min(99, totalSellScore + 15);
-          reasons.push('Macro Downtrend Steering: Trend follows EMA50 (Capped Buy <= 25, +15 Sell Score)');
+        totalSellScore = Math.min(99, totalSellScore + 10);
+        reasons.push('Macro Downtrend Steering: Trend follows EMA50 (+10 Sell Score)');
+        if (!isExemptBuyReversal) {
+          totalBuyScore = Math.max(0, totalBuyScore - 15);
         }
       } else if (isMacroBullish || currentPrice > sr.ema50) {
-        totalSellScore = Math.min(totalSellScore, 25);
-        if (currentPrice > sr.ema50) {
-          totalBuyScore = Math.min(99, totalBuyScore + 15);
-          reasons.push('Macro Uptrend Steering: Trend follows EMA50 (Capped Sell <= 25, +15 Buy Score)');
+        totalBuyScore = Math.min(99, totalBuyScore + 10);
+        reasons.push('Macro Uptrend Steering: Trend follows EMA50 (+10 Buy Score)');
+        if (!isExemptSellReversal) {
+          totalSellScore = Math.max(0, totalSellScore - 15);
         }
       }
     } else if (marketRegime === 'RANGE') {

@@ -32,7 +32,7 @@ interface HeaderProps {
   latencyMetric: LatencyMetric;
 }
 
-export const Header: React.FC<HeaderProps> = ({
+export const Header: React.FC<HeaderProps> = React.memo(({
   exchangeStatus,
   onOpenCredentials,
   onOpenMotionVideo,
@@ -166,4 +166,4 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
     </header>
   );
-};
+});

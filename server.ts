@@ -11,21 +11,45 @@ import { deltaExchange, toDeltaSymbol } from './lib/deltaExchangeEngine';
 import { CandlestickMasterPatternEngine, candlestickMaster } from './lib/candlestickMasterPatternEngine';
 import { deltaOptionsCondor } from './lib/deltaOptionsCondorEngine';
 import { KlinePoint } from './src/types';
+import { CredentialsManager } from './lib/credentialsManager';
 
-const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
+const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3005;
+const IS_PAPER_WORKER =
+  process.env.PAPER_TRADING === 'true' ||
+  process.env.DELTA_IS_SIMULATION === 'true' ||
+  process.env.DELTA_TRADING_MODE === 'SIMULATION_PAPER' ||
+  PORT !== 3005;
 
-// Default to user's provided Delta Exchange API credentials (Real Delta Exchange India)
-let EXCHANGE_CONFIG = {
-  apiKey: process.env.DELTA_API_KEY || process.env.EXCHANGE_API_KEY || '',
-  apiSecret: process.env.DELTA_API_SECRET || process.env.EXCHANGE_API_SECRET || '',
-  exchangeName: process.env.DELTA_IS_TESTNET === 'true' ? 'Delta Exchange Demo (Testnet)' : 'Delta Exchange India',
-  endpoint: process.env.DELTA_BASE_URL || (process.env.DELTA_IS_TESTNET === 'true' ? 'https://cdn-ind.testnet.deltaex.org' : 'https://api.india.delta.exchange'),
-  isSimulation: process.env.DELTA_IS_SIMULATION === 'true' || process.env.PAPER_TRADING === 'true' || !process.env.DELTA_API_KEY || !process.env.DELTA_API_SECRET,
-};
+// Load exchange credentials (prioritizes persistent .exchange_credentials.json over .env so users can change keys without editing .env after deploy)
+let EXCHANGE_CONFIG = CredentialsManager.loadCredentials();
 
-// Initialize Delta Exchange credentials immediately in Real / Live or Demo mode
-deltaExchange.updateCredentials(EXCHANGE_CONFIG.apiKey, EXCHANGE_CONFIG.apiSecret, EXCHANGE_CONFIG.isSimulation, process.env.DELTA_IS_TESTNET === 'true');
-deltaAutoTrader.updateConfig({ mode: EXCHANGE_CONFIG.isSimulation ? 'SIMULATION_PAPER' : (process.env.DELTA_IS_TESTNET === 'true' ? 'DELTA_TESTNET' : 'LIVE_DELTA_INDIA') });
+// Initialize Delta Exchange credentials ONLY on Port 3005 when not forced to paper mode.
+// Non-3005 paper ports (3001-3004, 3006-3010) stay strictly air-gapped in SIMULATION_PAPER so they never mutate live/testnet brackets!
+if (IS_PAPER_WORKER) {
+  deltaExchange.updateCredentials(
+    '',
+    '',
+    true,
+    EXCHANGE_CONFIG.isTestnet,
+    'SIMULATION_PAPER',
+    EXCHANGE_CONFIG.endpoint,
+    EXCHANGE_CONFIG.wsUrl
+  );
+  deltaAutoTrader.updateConfig({ mode: 'SIMULATION_PAPER' });
+} else {
+  deltaExchange.updateCredentials(
+    EXCHANGE_CONFIG.apiKey,
+    EXCHANGE_CONFIG.apiSecret,
+    EXCHANGE_CONFIG.isSimulation,
+    EXCHANGE_CONFIG.isTestnet,
+    EXCHANGE_CONFIG.tradingMode,
+    EXCHANGE_CONFIG.endpoint,
+    EXCHANGE_CONFIG.wsUrl
+  );
+  deltaAutoTrader.updateConfig({
+    mode: EXCHANGE_CONFIG.tradingMode === 'LIVE_DELTA_GLOBAL' ? 'LIVE_DELTA_INDIA' : EXCHANGE_CONFIG.tradingMode,
+  });
+}
 
 interface AutoSellRule {
   id: string;
@@ -147,56 +171,95 @@ async function startServer() {
   app.get('/api/health', (req, res) => {
     res.json({
       status: 'ok',
-      exchange: EXCHANGE_CONFIG.exchangeName,
+      exchange: IS_PAPER_WORKER ? 'Delta Paper Trading (Simulation)' : EXCHANGE_CONFIG.exchangeName,
       timestamp: Date.now(),
-      mode: EXCHANGE_CONFIG.isSimulation ? 'SIMULATION' : 'EXCHANGE_LIVE',
+      mode: (IS_PAPER_WORKER || EXCHANGE_CONFIG.isSimulation) ? 'SIMULATION' : 'EXCHANGE_LIVE',
     });
   });
 
-  // API 2: Credentials status & update (protected by admin auth)
+  // API 2: Credentials status & update (saved permanently to system storage without editing .env)
   app.get('/api/exchange/credentials', (req, res) => {
-    const key = EXCHANGE_CONFIG.apiKey || '';
-    const maskedKey = key.length > 8 
-      ? `${key.slice(0, 4)}...${key.slice(-4)}`
-      : key ? '••••••••' : 'NOT_SET';
-    
-    res.json({
-      hasApiKey: Boolean(EXCHANGE_CONFIG.apiKey),
-      hasApiSecret: Boolean(EXCHANGE_CONFIG.apiSecret),
-      maskedApiKey: maskedKey,
-      exchange: EXCHANGE_CONFIG.exchangeName,
-      isSimulation: EXCHANGE_CONFIG.isSimulation,
-    });
+    res.json(CredentialsManager.getMaskedStatus());
   });
 
-  app.post('/api/exchange/credentials', adminAuthMiddleware, (req, res) => {
-    const { apiKey, apiSecret, exchangeName, isSimulation } = req.body;
-    if (apiKey !== undefined) EXCHANGE_CONFIG.apiKey = String(apiKey).trim();
-    if (apiSecret !== undefined) EXCHANGE_CONFIG.apiSecret = String(apiSecret).trim();
-    if (exchangeName) EXCHANGE_CONFIG.exchangeName = exchangeName;
-    if (isSimulation !== undefined) EXCHANGE_CONFIG.isSimulation = Boolean(isSimulation);
+  app.post('/api/exchange/credentials', (req, res) => {
+    const {
+      activeMode,
+      tradingMode,
+      demoApiKey,
+      demoApiSecret,
+      liveApiKey,
+      liveApiSecret,
+      liveRegion,
+      clearDemoKeys,
+      clearLiveKeys,
+      apiKey,
+      apiSecret,
+      isSimulation,
+      isTestnet,
+    } = req.body;
 
-    deltaExchange.updateCredentials(EXCHANGE_CONFIG.apiKey, EXCHANGE_CONFIG.apiSecret, EXCHANGE_CONFIG.isSimulation, process.env.DELTA_IS_TESTNET === 'true');
+    // Save to persistent file (.exchange_credentials.json)
+    EXCHANGE_CONFIG = CredentialsManager.saveCredentials({
+      activeMode,
+      tradingMode,
+      demoApiKey,
+      demoApiSecret,
+      liveApiKey,
+      liveApiSecret,
+      liveRegion,
+      clearDemoKeys,
+      clearLiveKeys,
+      apiKey: apiKey !== undefined ? String(apiKey).trim() : undefined,
+      apiSecret: apiSecret !== undefined ? String(apiSecret).trim() : undefined,
+      isSimulation: isSimulation !== undefined ? Boolean(isSimulation) : undefined,
+      isTestnet: isTestnet !== undefined ? Boolean(isTestnet) : undefined,
+    });
+
+    // Hot-reload into live exchange and autotrader engines ONLY when this worker is authorized for live/testnet dispatch (Port 3005)
+    if (IS_PAPER_WORKER) {
+      deltaExchange.updateCredentials(
+        '',
+        '',
+        true,
+        EXCHANGE_CONFIG.isTestnet,
+        'SIMULATION_PAPER',
+        EXCHANGE_CONFIG.endpoint,
+        EXCHANGE_CONFIG.wsUrl
+      );
+      deltaAutoTrader.updateConfig({ mode: 'SIMULATION_PAPER' });
+    } else {
+      deltaExchange.updateCredentials(
+        EXCHANGE_CONFIG.apiKey,
+        EXCHANGE_CONFIG.apiSecret,
+        EXCHANGE_CONFIG.isSimulation,
+        EXCHANGE_CONFIG.isTestnet,
+        EXCHANGE_CONFIG.tradingMode,
+        EXCHANGE_CONFIG.endpoint,
+        EXCHANGE_CONFIG.wsUrl
+      );
+      deltaAutoTrader.updateConfig({
+        mode: EXCHANGE_CONFIG.tradingMode === 'LIVE_DELTA_GLOBAL' ? 'LIVE_DELTA_INDIA' : EXCHANGE_CONFIG.tradingMode,
+      });
+    }
 
     res.json({
       success: true,
-      message: 'Exchange credentials updated successfully',
-      isSimulation: EXCHANGE_CONFIG.isSimulation,
+      message: `Exchange configuration updated! Active: ${EXCHANGE_CONFIG.tradingMode} (${EXCHANGE_CONFIG.exchangeName})`,
+      status: CredentialsManager.getMaskedStatus(),
     });
   });
 
-  // API 3: Verify exchange connection with HMAC SHA256 Signature to Delta Exchange
-  app.get('/api/exchange/test-connection', async (req, res) => {
-    const apiKey = EXCHANGE_CONFIG.apiKey;
-    const apiSecret = EXCHANGE_CONFIG.apiSecret;
-
+  // Helper: Verify exchange connection with HMAC SHA256 Signature to Delta Exchange
+  async function verifyDeltaConnection(apiKey: string, apiSecret: string, endpoint: string, exchangeName: string) {
     if (!apiKey || !apiSecret) {
-      return res.json({
+      return {
         connected: false,
-        error: 'API Key or Secret missing. Set credentials first.',
-        isSimulation: EXCHANGE_CONFIG.isSimulation,
+        status: 'MISSING_CREDENTIALS',
+        exchange: exchangeName,
+        error: 'API Key or Secret missing. Please configure credentials first.',
         balances: [],
-      });
+      };
     }
 
     try {
@@ -208,8 +271,7 @@ async function startServer() {
         .update(payload)
         .digest('hex');
 
-      const url = `${EXCHANGE_CONFIG.endpoint}${path}`;
-      
+      const url = `${endpoint}${path}`;
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 6000);
 
@@ -240,38 +302,86 @@ async function startServer() {
 
         const totalNetEquity = data.meta?.net_equity || (validBalances.reduce((sum: number, b: any) => sum + parseFloat(b.free || '0'), 0)).toFixed(2);
 
-        return res.json({
+        return {
           connected: true,
-          status: EXCHANGE_CONFIG.isSimulation ? 'DEMO_CONNECTED' : 'LIVE_CONNECTED',
-          exchange: EXCHANGE_CONFIG.exchangeName,
+          status: 'LIVE_CONNECTED',
+          exchange: exchangeName,
+          endpoint,
           netEquityUSD: totalNetEquity,
           balances: validBalances,
-        });
+        };
       } else {
         const errorMsg = data.error?.code || data.error || data.msg || `HTTP ${response.status}`;
         const clientIp = data.error?.context?.client_ip || '';
 
-        return res.json({
+        return {
           connected: false,
           status: errorMsg === 'ip_not_whitelisted_for_api_key' ? 'IP_NOT_WHITELISTED' : 'KEY_RESTRICTED',
-          exchange: EXCHANGE_CONFIG.exchangeName,
+          exchange: exchangeName,
+          endpoint,
           error: errorMsg,
           clientIp,
           suggestion: errorMsg === 'ip_not_whitelisted_for_api_key'
             ? `Your Delta API key has IP whitelisting enabled. Please add your IP (${clientIp || 'your server IP'}) in Delta Exchange API settings.`
             : 'Check your Delta Exchange API credentials and permissions.',
           balances: [],
-        });
+        };
       }
     } catch (err: any) {
-      return res.json({
+      return {
         connected: false,
         status: 'NETWORK_OR_TIMEOUT',
+        exchange: exchangeName,
+        endpoint,
         error: err.message || 'Connection timeout to exchange endpoint',
         suggestion: 'Verify network connectivity to Delta Exchange.',
         balances: [],
-      });
+      };
     }
+  }
+
+  // API 3: Verify exchange connection with HMAC SHA256 Signature (Active configuration)
+  app.get('/api/exchange/test-connection', async (req, res) => {
+    const creds = CredentialsManager.getCredentials();
+    const result = await verifyDeltaConnection(
+      creds.apiKey,
+      creds.apiSecret,
+      creds.endpoint,
+      creds.exchangeName
+    );
+    res.json(result);
+  });
+
+  // API 3b: Verify exchange connection for specific target ('demo' or 'live') with custom/saved credentials
+  app.post('/api/exchange/test-connection', async (req, res) => {
+    const { target, apiKey, apiSecret, endpoint, region } = req.body || {};
+    const creds = CredentialsManager.getCredentials();
+
+    let targetKey = apiKey;
+    let targetSecret = apiSecret;
+    let targetEndpoint = endpoint;
+    let targetExchange = 'Delta Exchange';
+
+    if (target === 'demo') {
+      targetKey = targetKey || creds.demo.apiKey;
+      targetSecret = targetSecret || creds.demo.apiSecret;
+      targetEndpoint = targetEndpoint || creds.demo.endpoint || 'https://cdn-ind.testnet.deltaex.org';
+      targetExchange = 'Delta Exchange Demo (Testnet)';
+    } else if (target === 'live') {
+      targetKey = targetKey || creds.live.apiKey;
+      targetSecret = targetSecret || creds.live.apiSecret;
+      const targetRegion = region || creds.live.region || 'INDIA';
+      targetEndpoint = targetEndpoint || (targetRegion === 'GLOBAL' ? 'https://api.delta.exchange' : 'https://api.india.delta.exchange');
+      targetExchange = targetRegion === 'GLOBAL' ? 'Delta Exchange Global (Live)' : 'Delta Exchange India (Live)';
+    } else {
+      targetKey = targetKey || creds.apiKey;
+      targetSecret = targetSecret || creds.apiSecret;
+      targetEndpoint = targetEndpoint || creds.endpoint;
+      targetExchange = creds.exchangeName;
+    }
+
+    const result = await verifyDeltaConnection(targetKey, targetSecret, targetEndpoint, targetExchange);
+    res.json(result);
   });
 
   // API 4: Get balances (live Delta or simulation)
@@ -300,71 +410,69 @@ async function startServer() {
   let lastTickerFetch = 0;
 
   app.get('/api/market/tickers', async (req, res) => {
-    const now = Date.now();
-    if (cachedTickers.length > 0 && now - lastTickerFetch < 250) {
-      return res.json(cachedTickers);
-    }
+    const topSymbols = [
+      'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT',
+      'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'SUIUSDT', 'NEARUSDT', 'DOTUSDT',
+      'LINKUSDT', 'UNIUSDT', 'AAVEUSDT', 'MKRUSDT', 'INJUSDT',
+      'PEPEUSDT', 'SHIBUSDT', 'BONKUSDT', 'FLOKIUSDT'
+    ];
 
     try {
-      const response = await fetch('https://data-api.binance.vision/api/v3/ticker/24hr', {
-        headers: { 'Accept': 'application/json' },
-      });
-      if (response.ok) {
-        const rawData = await response.json();
-        // Filter for top USDT trading pairs (8 dedicated indicator coins)
-        const topSymbols = [
-          'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'SUIUSDT'
-        ];
-        
-        const filtered = (rawData as any[])
-          .filter(t => topSymbols.includes(t.symbol))
-          .map(t => ({
-            symbol: t.symbol,
-            price: parseFloat(t.lastPrice),
-            changePercent24h: parseFloat(t.priceChangePercent),
-            change24h: parseFloat(t.priceChange),
-            high24h: parseFloat(t.highPrice),
-            low24h: parseFloat(t.lowPrice),
-            volume24h: parseFloat(t.volume),
-            quoteVolume24h: parseFloat(t.quoteVolume),
-            askPrice: parseFloat(t.askPrice),
-            bidPrice: parseFloat(t.bidPrice),
-            count: t.count,
-          }))
-          .sort((a, b) => b.quoteVolume24h - a.quoteVolume24h);
-
-        cachedTickers = filtered;
-        lastTickerFetch = now;
-        return res.json(filtered);
+      // 1. High-speed Delta Exchange CDN tickers (real-time moving prices, zero rate limits)
+      await deltaExchange.refreshAllTickers();
+      const liveList = deltaExchange.getAllMarketTickers(topSymbols);
+      if (liveList && liveList.length > 0) {
+        cachedTickers = liveList;
+        lastTickerFetch = Date.now();
+        return res.json(liveList);
       }
     } catch (e) {
-      console.warn('Fallback ticker fetch error:', e);
+      console.warn('Delta tickers fetch error:', e);
     }
+
+    // 2. Fallback to Delta Exchange live mark prices
+    try {
+      const liveList = await Promise.all(topSymbols.map(async sym => {
+        const p = await deltaExchange.getMarketPrice(sym);
+        return {
+          symbol: sym,
+          price: p,
+          changePercent24h: 0.0,
+          change24h: 0.0,
+          high24h: p * 1.01,
+          low24h: p * 0.99,
+          volume24h: 1000,
+          quoteVolume24h: 1000000,
+          askPrice: p * 1.0001,
+          bidPrice: p * 0.9999,
+          count: 100,
+        };
+      }));
+      if (liveList.length > 0) {
+        cachedTickers = liveList;
+        lastTickerFetch = Date.now();
+        return res.json(liveList);
+      }
+    } catch (e2) {}
 
     // If cache available, return cache
     if (cachedTickers.length > 0) {
       return res.json(cachedTickers);
     }
 
-    // Default static fallback in case of total external outage
-    res.json([
-      { symbol: 'BTCUSDT', price: 65420.50, changePercent24h: 3.45, change24h: 2180.2, high24h: 66100, low24h: 63120, volume24h: 24500, quoteVolume24h: 1580000000, askPrice: 65421, bidPrice: 65420 },
-      { symbol: 'ETHUSDT', price: 3450.20, changePercent24h: -1.25, change24h: -43.8, high24h: 3520, low24h: 3390, volume24h: 185000, quoteVolume24h: 640000000, askPrice: 3450.5, bidPrice: 3450 },
-      { symbol: 'SOLUSDT', price: 182.40, changePercent24h: 8.72, change24h: 14.6, high24h: 186.5, low24h: 167.2, volume24h: 4800000, quoteVolume24h: 850000000, askPrice: 182.5, bidPrice: 182.3 },
-      { symbol: 'BNBUSDT', price: 588.60, changePercent24h: 0.95, change24h: 5.5, high24h: 594, low24h: 580, volume24h: 520000, quoteVolume24h: 305000000, askPrice: 588.8, bidPrice: 588.5 },
-      { symbol: 'XRPUSDT', price: 0.5840, changePercent24h: 2.10, change24h: 0.012, high24h: 0.598, low24h: 0.569, volume24h: 420000000, quoteVolume24h: 245000000, askPrice: 0.5841, bidPrice: 0.5839 },
-      { symbol: 'DOGEUSDT', price: 0.1420, changePercent24h: 5.40, change24h: 0.0072, high24h: 0.148, low24h: 0.134, volume24h: 1200000000, quoteVolume24h: 168000000, askPrice: 0.1421, bidPrice: 0.1419 },
-    ]);
+    res.json([]);
   });
 
   // API 6: Order book depth for selected coin
   app.get('/api/market/depth', async (req, res) => {
     const symbol = (req.query.symbol as string) || 'BTCUSDT';
     try {
-      const resp = await fetch(`https://data-api.binance.vision/api/v3/depth?symbol=${symbol}&limit=12`);
-      if (resp.ok) {
-        const depth = await resp.json();
-        return res.json(depth);
+      const book = await deltaExchange.getL2Orderbook(symbol);
+      if (book && (book.buy?.length || book.sell?.length)) {
+        return res.json({
+          bids: (book.buy || []).map((b: any) => [b.price?.toString() || b[0], b.size?.toString() || b[1]]),
+          asks: (book.sell || []).map((a: any) => [a.price?.toString() || a[0], a.size?.toString() || a[1]]),
+        });
       }
     } catch (e) {
       console.warn('Depth fetch error:', e);
@@ -440,27 +548,30 @@ async function startServer() {
       }
     } catch (e) {}
 
-    // 2. Try Binance public klines API
+    // 2. High-speed Gate.io Candlesticks API (100% reliable, zero geo-restrictions)
     try {
-      const resp = await fetch(`https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`, {
-        headers: { 'Accept': 'application/json' }
+      const base = symbol.toUpperCase().replace(/USD[T]?$/, '');
+      const gateRes = interval === '1h' ? '1h' : (interval === '1m' ? '1m' : (interval === '5m' ? '5m' : (interval === '4h' ? '4h' : (interval === '1d' ? '1d' : '15m'))));
+      const resp = await fetch(`https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair=${base}_USDT&interval=${gateRes}&limit=${limit}`, {
+        headers: { 'Accept': 'application/json' },
+        signal: AbortSignal.timeout(3000),
       });
       if (resp.ok) {
-        const klines = await resp.json();
-        if (Array.isArray(klines) && klines.length > 0) {
-          const formatted = klines.map((k: any) => ({
-            time: k[0],
-            open: parseFloat(k[1]),
-            high: parseFloat(k[2]),
-            low: parseFloat(k[3]),
-            close: parseFloat(k[4]),
-            volume: parseFloat(k[5]),
+        const data = await resp.json();
+        if (Array.isArray(data) && data.length > 0) {
+          const formatted = data.map((k: any) => ({
+            time: parseInt(k[0]) * 1000,
+            open: parseFloat(k[5]),
+            high: parseFloat(k[3]),
+            low: parseFloat(k[4]),
+            close: parseFloat(k[2]),
+            volume: parseFloat(k[1]),
           }));
           return res.json(formatted);
         }
       }
     } catch (e) {
-      console.warn('Klines fetch error:', e);
+      console.warn('GateIO klines error:', e);
     }
 
     // If both real sources fail, do NOT inject fake random candles unless demo is explicitly requested (solutions.pdf Issue 6)
@@ -584,7 +695,7 @@ async function startServer() {
     let liveExecutionResult: any = null;
     let isLiveExecuted = false;
 
-    if (!EXCHANGE_CONFIG.isSimulation && EXCHANGE_CONFIG.apiKey && EXCHANGE_CONFIG.apiSecret) {
+    if (!IS_PAPER_WORKER && deltaExchange.isLiveDispatchActive() && !EXCHANGE_CONFIG.isSimulation && EXCHANGE_CONFIG.apiKey && EXCHANGE_CONFIG.apiSecret) {
       try {
         const orderType = (type || 'MARKET').toUpperCase() === 'LIMIT' ? 'limit_order' : 'market_order';
         const resDelta = await deltaExchange.placeOrder({
@@ -752,7 +863,7 @@ async function startServer() {
           let orderId = 'auto-ord-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
 
           // In live mode, execute on exchange; do not simulate on failure (solutions.pdf Issue 5)
-          if (!EXCHANGE_CONFIG.isSimulation && EXCHANGE_CONFIG.apiKey && EXCHANGE_CONFIG.apiSecret) {
+          if (!IS_PAPER_WORKER && deltaExchange.isLiveDispatchActive() && !EXCHANGE_CONFIG.isSimulation && EXCHANGE_CONFIG.apiKey && EXCHANGE_CONFIG.apiSecret) {
             try {
               const liveRes = await deltaExchange.placeOrder({
                 symbol: rule.symbol,
@@ -827,6 +938,28 @@ async function startServer() {
       await deltaAutoTrader.syncLivePositionsFromExchange();
     } catch (e) {}
     res.json(deltaAutoTrader.getStatus());
+  });
+
+  // System Switcher API: Allows dynamically changing between 3001, 3005, 3008, dual-connected, or all three
+  app.get('/api/autotrader/system', (req, res) => {
+    const current = deltaAutoTrader.getStatus().activeSystem || '3001_3005';
+    const available = [
+      { id: '3001', name: 'System 3001 (Sidhant 3-Step + SMC Master)', description: 'Fibonacci 0.618-0.786 Golden Pocket + SMC Structure' },
+      { id: '3005', name: 'System 3005 (Pure SMC Engine)', description: 'Neeraj Joshi & Solomon King BOS/CHoCH + Order Block/FVG Retest' },
+      { id: '3008', name: 'System 3008 (YT Solano VWAP Engine)', description: 'Sean Solano VWAP + 9 EMA Institutional Flow' },
+      { id: '3001_3005', name: 'Dual Connected (3001 + 3005)', description: 'Evaluates 3001 and 3005 independently, selects highest-confidence setup' },
+      { id: '3005_3008', name: 'Dual Connected (3005 + 3008)', description: 'Evaluates 3005 and 3008 independently, selects highest-confidence setup' },
+      { id: '3001_3008', name: 'Dual Connected (3001 + 3008)', description: 'Evaluates 3001 and 3008 independently, selects highest-confidence setup' },
+      { id: 'ALL_THREE', name: 'Triple Master (3001 + 3005 + 3008)', description: 'Evaluates all 3 top systems independently and picks the best un-diluted signal' },
+    ];
+    res.json({ success: true, activeSystem: current, availableSystems: available });
+  });
+
+  app.post('/api/autotrader/system', (req, res) => {
+    const { system } = req.body;
+    if (!system) return res.status(400).json({ error: 'System identifier required' });
+    deltaAutoTrader.setActiveSystem(system);
+    res.json({ success: true, activeSystem: system, message: `Active system set to ${system}` });
   });
 
   // 2. Get Live 15M Indicators Diagnostics for all 8 Coins
@@ -1235,6 +1368,12 @@ async function startServer() {
     res.json({ success: true, message: 'All positions reset to 0. Capital fully protected.' });
   });
 
+  // 5y2. Reset Floating PnL to $0.00
+  app.post('/api/autotrader/reset-floating-pnl', adminAuthMiddleware, (req, res) => {
+    deltaAutoTrader.resetPositions();
+    res.json({ success: true, message: 'Floating PnL successfully reset to $0.00.' });
+  });
+
   // 5z. Reset PnL and Closed Trades History (Fresh audit ledger start without closing active positions)
   app.post('/api/autotrader/reset-history', adminAuthMiddleware, (req, res) => {
     deltaAutoTrader.resetPnlAndHistory();
@@ -1284,6 +1423,12 @@ async function startServer() {
     }
     deltaAutoTrader.resetPositions();
     res.json({ success: true, message: 'All positions closed on exchange and local engine' });
+  });
+
+  // 5a2b. Reset Circuit Breaker
+  app.post('/api/autotrader/reset-circuit-breaker', (req, res) => {
+    deltaAutoTrader.resetCircuitBreaker();
+    res.json({ success: true, message: 'Circuit breaker reset successfully' });
   });
 
   // 5a3. Reverse Single Active Position
@@ -1338,14 +1483,25 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    app.use(express.static(distPath));
+    app.use(express.static(distPath, {
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.html')) {
+          res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+          res.setHeader('Pragma', 'no-cache');
+          res.setHeader('Expires', '0');
+        }
+      }
+    }));
     app.get('*', (req, res) => {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 
-  const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Crypto Market & Auto-Sell server running on http://0.0.0.0:${PORT}`);
+  const server = app.listen(PORT, () => {
+    console.log(`Crypto Market & Auto-Sell server running on port ${PORT} (dual-stack: localhost, 127.0.0.1, 0.0.0.0)`);
   });
   server.on('error', (err: any) => {
     console.error('Fatal primary server bind error:', err.message);

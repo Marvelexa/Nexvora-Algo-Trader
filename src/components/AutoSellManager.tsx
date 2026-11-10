@@ -31,7 +31,7 @@ interface AutoSellManagerProps {
   onCancelAllRules: () => Promise<void>;
 }
 
-export const AutoSellManager: React.FC<AutoSellManagerProps> = ({
+export const AutoSellManager: React.FC<AutoSellManagerProps> = React.memo(({
   rules,
   tickers,
   selectedTicker,
@@ -625,4 +625,4 @@ export const AutoSellManager: React.FC<AutoSellManagerProps> = ({
       )}
     </div>
   );
-};
+});

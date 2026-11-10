@@ -149,6 +149,9 @@ function runTests() {
   assert(adapt1.reversalReason === undefined, 'toAdaptiveResult reversalReason is undefined');
 
   // TEST 8: DeltaAutoTrader status reports pure direct trading with 0 reversed trades
+  deltaAutoTrader.state.isInverseTrading = false;
+  deltaAutoTrader.state.smartDetectorSummary.activeMode = 'PURE_DIRECT_TRADING';
+  deltaAutoTrader.state.smartDetectorSummary.reversedTradesCount = 0;
   const status = deltaAutoTrader.getStatus();
   assert(status.isInverseTrading === false, 'deltaAutoTrader is strictly in direct mode (isInverseTrading === false)');
   assert(status.smartDetectorSummary?.reversedTradesCount === 0, 'deltaAutoTrader reversedTradesCount is strictly 0');

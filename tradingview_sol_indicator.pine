@@ -1,0 +1,198 @@
+//@version=5
+indicator("Nexvora SOL Quantum Momentum Sniper [PRO EDITION]", "NEX-SOL-PRO", overlay = true)
+
+// ==============================================================================
+// 1. INPUT PARAMETERS
+// ==============================================================================
+grp_zlema = "Zero-Lag EMA Core"
+fastLen   = input.int(8, "Fast ZLEMA Period", group = grp_zlema)
+slowLen   = input.int(21, "Slow ZLEMA Period", group = grp_zlema)
+
+grp_wave  = "Quantum Momentum Wave"
+accelSens = input.float(1.5, "Acceleration Sensitivity", step = 0.1, group = grp_wave)
+sigLen    = input.int(9, "Signal Smoothing Length", group = grp_wave)
+extremeTh = input.int(38, "Extreme Momentum Threshold (±)", group = grp_wave)
+
+grp_trend = "Macro Trend & Volatility"
+trendLen  = input.int(100, "Macro Trend EMA Length", group = grp_trend)
+atrLen    = input.int(14, "ATR Length", group = grp_trend)
+
+grp_risk  = "Target Profit & Risk Multipliers"
+tpMult    = input.float(1.30, "Take Profit Multiplier (x ATR)", step = 0.05, group = grp_risk)
+slMult    = input.float(2.40, "Stop Loss Multiplier (x ATR)", step = 0.05, group = grp_risk)
+beTrigger = input.float(0.80, "Breakeven Trigger (x ATR)", step = 0.05, group = grp_risk)
+
+grp_ui    = "Visuals & Display"
+showEma   = input.bool(true, "Show 100 Trend EMA", group = grp_ui)
+showZlema = input.bool(true, "Show ZLEMA Cloud", group = grp_ui)
+showHud   = input.bool(true, "Show On-Chart HUD Table", group = grp_ui)
+colorBars = input.bool(true, "Colorize Candles by Momentum", group = grp_ui)
+
+// ==============================================================================
+// 2. MATHEMATICAL CORE FUNCTIONS
+// ==============================================================================
+// Zero-Lag Exponential Moving Average (ZLEMA)
+f_zlema(src, len) =>
+    lag = math.floor((len - 1) / 2)
+    src_lag = src + (src - nz(src[lag], src))
+    ta.ema(src_lag, len)
+
+// Dreiss Choppiness Index (CI)
+f_ci(len) =>
+    100 * math.log10(math.sum(ta.tr, len) / (ta.highest(high, len) - ta.lowest(low, len))) / math.log10(len)
+
+// ==============================================================================
+// 3. CORE CALCULATIONS
+// ==============================================================================
+atr14 = ta.atr(atrLen)
+safeAtr = atr14 > 0 ? atr14 : close * 0.015
+
+// Zero-Lag EMAs
+fastZ = f_zlema(close, fastLen)
+slowZ = f_zlema(close, slowLen)
+
+// Velocity & Acceleration
+vel = fastZ - slowZ
+acc = ta.change(vel) * accelSens
+velPlusAcc = vel + acc
+
+wave = ta.ema(velPlusAcc, 3)
+sig  = ta.ema(wave, sigLen)
+
+// Normalized Scale (-100 to +100)
+absWave = math.abs(wave)
+normHighest = ta.ema(ta.highest(absWave, 100), 20)
+scale = normHighest > 0 ? 100.0 / normHighest : 1.0
+
+scaledWave   = wave * scale
+scaledSignal = sig * scale
+scaledHist   = scaledWave - scaledSignal
+
+// Macro Trend EMA (100)
+trendEma = ta.ema(close, trendLen)
+trendUp  = close >= trendEma
+trendDown = close <= trendEma
+
+// Chop & Range Consolidation
+chopIndex = f_ci(14)
+[adxVal, diPlus, diMinus] = ta.dmi(14, 14)
+isAdxChop = adxVal < 20.0
+boxRange5 = ta.highest(high, 5) - ta.lowest(low, 5)
+isBoxChop = boxRange5 < (safeAtr * 0.85)
+
+// Inside Bar Filter
+isInsideBar = (high <= high[1]) and (low >= low[1])
+
+// Deep Reversal Memory (±38 extreme zone in last 6 bars)
+wasDeepOversold   = ta.lowest(scaledWave, 6) < -extremeTh
+wasDeepOverbought = ta.highest(scaledWave, 6) > extremeTh
+
+// Crossover Triggers (Current bar or 1 bar ago)
+isZlemaBullCross = ta.crossover(fastZ, slowZ) or ta.crossover(fastZ[1], slowZ[1])
+isZlemaBearCross = ta.crossunder(fastZ, slowZ) or ta.crossunder(fastZ[1], slowZ[1])
+
+isWaveBullCross  = ta.crossover(scaledWave, scaledSignal) or ta.crossover(scaledWave[1], scaledSignal[1])
+isWaveBearCross  = ta.crossunder(scaledWave, scaledSignal) or ta.crossunder(scaledWave[1], scaledSignal[1])
+
+isFreshBullTrigger = isZlemaBullCross or isWaveBullCross
+isFreshBearTrigger = isZlemaBearCross or isWaveBearCross
+
+// Institutional Candle Anatomy
+isBullCandle = close > open
+isBearCandle = close < open
+
+// Permissions
+allowBuyTrend  = (trendUp or isFreshBullTrigger) and not isInsideBar
+allowSellTrend = (trendDown or wasDeepOverbought or isFreshBearTrigger or isBearCandle) and not isInsideBar
+
+isBullishMomentum = (scaledWave > scaledSignal or fastZ > slowZ) and close >= open
+isBearishMomentum = scaledWave < scaledSignal or fastZ < slowZ or close < open
+
+// Entry Signals
+canBuy  = (isFreshBullTrigger or (isBullishMomentum and isBullCandle)) and allowBuyTrend and not trendDown
+canSell = (isFreshBearTrigger or (isBearishMomentum and isBearCandle)) and allowSellTrend
+
+buySignal  = canBuy and (isFreshBullTrigger or trendUp)
+sellSignal = canSell and (isFreshBearTrigger or trendDown or not canBuy)
+
+// Prevent consecutive duplicate signals on same bar
+buyTrigger  = buySignal and not buySignal[1]
+sellTrigger = sellSignal and not sellSignal[1]
+
+// ==============================================================================
+// 4. DYNAMIC TARGET & RISK LEVELS
+// ==============================================================================
+var float entryPrice = na
+var float tpPrice = na
+var float slPrice = na
+var float bePrice = na
+
+if buyTrigger
+    entryPrice := close
+    tpPrice    := close + (safeAtr * tpMult)
+    slPrice    := close - (safeAtr * slMult)
+    bePrice    := close + (safeAtr * beTrigger)
+
+if sellTrigger
+    entryPrice := close
+    tpPrice    := close - (safeAtr * tpMult)
+    slPrice    := close + (safeAtr * slMult)
+    bePrice    := close - (safeAtr * beTrigger)
+
+// ==============================================================================
+// 5. CHART PLOTS & VISUALS
+// ==============================================================================
+// Macro Trend 100 EMA
+p_trend = plot(showEma ? trendEma : na, "100 Trend EMA", color = trendUp ? color.new(color.teal, 20) : color.new(color.orange, 20), linewidth = 2)
+
+// ZLEMA Cloud
+p_fast = plot(showZlema ? fastZ : na, "Fast ZLEMA (8)", color = color.new(#00e5ff, 30), linewidth = 2)
+p_slow = plot(showZlema ? slowZ : na, "Slow ZLEMA (21)", color = color.new(#b388ff, 30), linewidth = 2)
+fill(p_fast, p_slow, color = fastZ >= slowZ ? color.new(color.teal, 85) : color.new(color.red, 85), title = "ZLEMA Cloud Fill")
+
+// Signal Markers
+plotshape(buyTrigger, "NEX-SOL-PRO BUY Signal", shape.triangleup, location.belowbar, color.new(#00e676, 0), size = size.normal, text = "SOL BUY", textcolor = color.white)
+plotshape(sellTrigger, "NEX-SOL-PRO SELL Signal", shape.triangledown, location.abovebar, color.new(#ff1744, 0), size = size.normal, text = "SOL SELL", textcolor = color.white)
+
+// Target Level Lines
+plot(buyTrigger or sellTrigger ? tpPrice : na, "Target Profit", color = color.green, style = plot.style_linebr, linewidth = 2)
+plot(buyTrigger or sellTrigger ? slPrice : na, "Stop Loss", color = color.red, style = plot.style_linebr, linewidth = 2)
+
+// Candle Color Coding
+candleColor = scaledWave > scaledSignal and trendUp ? #00e676 :
+              scaledWave < scaledSignal and trendDown ? #ff1744 :
+              scaledWave > 0 ? #00b0ff : #ff9100
+barcolor(colorBars ? candleColor : na)
+
+// ==============================================================================
+// 6. ON-CHART HUD DASHBOARD
+// ==============================================================================
+if showHud and barstate.islast
+    var table hud = table.new(position.top_right, 2, 7, bgcolor = color.new(#131722, 10), border_color = color.gray, border_width = 1)
+    
+    table.cell(hud, 0, 0, "SOL QUANTUM SNIPER", bgcolor = color.new(#2962ff, 20), text_color = color.white, text_size = size.small)
+    table.cell(hud, 1, 0, "PRO EDITION", bgcolor = color.new(#2962ff, 20), text_color = color.yellow, text_size = size.small)
+    
+    table.cell(hud, 0, 1, "Macro 100 EMA", text_color = color.gray, text_size = size.small)
+    table.cell(hud, 1, 1, trendUp ? "BULLISH" : "BEARISH", text_color = trendUp ? color.green : color.red, text_size = size.small)
+
+    table.cell(hud, 0, 2, "ZLEMA (8/21)", text_color = color.gray, text_size = size.small)
+    table.cell(hud, 1, 2, fastZ >= slowZ ? "BULL CROSS" : "BEAR CROSS", text_color = fastZ >= slowZ ? color.green : color.red, text_size = size.small)
+
+    table.cell(hud, 0, 3, "Quantum Momentum", text_color = color.gray, text_size = size.small)
+    table.cell(hud, 1, 3, str.tostring(scaledWave, "#.0") + " (" + (scaledWave > scaledSignal ? "UP" : "DOWN") + ")", text_color = scaledWave > scaledSignal ? color.green : color.red, text_size = size.small)
+
+    table.cell(hud, 0, 4, "Chop Index / ADX", text_color = color.gray, text_size = size.small)
+    table.cell(hud, 1, 4, str.tostring(chopIndex, "#.0") + " / " + str.tostring(adxVal, "#.0"), text_color = isAdxChop ? color.orange : color.white, text_size = size.small)
+
+    table.cell(hud, 0, 5, "14 ATR Target TP", text_color = color.gray, text_size = size.small)
+    table.cell(hud, 1, 5, "+" + str.tostring(safeAtr * tpMult, "#.00") + " (" + str.tostring(tpMult) + "x)", text_color = color.green, text_size = size.small)
+
+    table.cell(hud, 0, 6, "14 ATR Risk SL", text_color = color.gray, text_size = size.small)
+    table.cell(hud, 1, 6, "-" + str.tostring(safeAtr * slMult, "#.00") + " (" + str.tostring(slMult) + "x)", text_color = color.red, text_size = size.small)
+
+// ==============================================================================
+// 7. TRADINGVIEW ALERTS
+// ==============================================================================
+alertcondition(buyTrigger, "NEX-SOL-PRO BUY Trigger", "NEX-SOL-PRO: Confirmed Institutional BUY on SOLUSD!")
+alertcondition(sellTrigger, "NEX-SOL-PRO SELL Trigger", "NEX-SOL-PRO: Confirmed Institutional SELL on SOLUSD!")

@@ -20,7 +20,7 @@ interface MarketTickerListProps {
   inrRate: number;
 }
 
-export const MarketTickerList: React.FC<MarketTickerListProps> = ({
+export const MarketTickerList: React.FC<MarketTickerListProps> = React.memo(({
   tickers,
   selectedSymbol,
   onSelectSymbol,
@@ -70,7 +70,7 @@ export const MarketTickerList: React.FC<MarketTickerListProps> = ({
           return ['SOLUSDT', 'ADAUSDT', 'AVAXUSDT', 'SUIUSDT', 'NEARUSDT', 'DOTUSDT'].includes(symbol);
         }
         if (category === 'MEME') {
-          return ['DOGEUSDT', 'SHIBUSDT', 'PEPEUSDT', 'FLOKIUSDT', 'BONKUSDT'].includes(symbol);
+          return ['DOGEUSDT', 'SHIBUSDT', 'PEPEUSDT', 'FLOKIUSDT', 'BONKUSDT', '1000SHIBUSDT', '1000PEPEUSDT', '1000FLOKIUSDT', '1000BONKUSDT'].includes(symbol);
         }
         if (category === 'DEFI') {
           return ['LINKUSDT', 'UNIUSDT', 'AAVEUSDT', 'MKRUSDT', 'INJUSDT'].includes(symbol);
@@ -334,4 +334,4 @@ export const MarketTickerList: React.FC<MarketTickerListProps> = ({
       </div>
     </div>
   );
-};
+});
